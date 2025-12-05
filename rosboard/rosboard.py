@@ -66,7 +66,7 @@ class ROSBoardNode(object):
         }
 
         tornado_handlers = [
-                (r"/rosboard/v1", ROSBoardSocketHandler, {
+                (r"/websocket/ros", ROSBoardSocketHandler, {
                     "node": self,
                 }),
                 (r"/(.*)", NoCacheStaticFileHandler, {
@@ -175,6 +175,29 @@ class ROSBoardNode(object):
             time.sleep(1)
             self.sync_subs()
 
+    def sync_topics(self):
+        # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
+        self.lock.acquire()
+        try:
+            # all topics and their types as strings e.g. {"/foo": "std_msgs/String", "/bar": "std_msgs/Int32"}
+            self.all_topics = {}
+
+            for topic_tuple in rospy.get_published_topics():
+                topic_name = topic_tuple[0]
+                topic_type = topic_tuple[1]
+                if type(topic_type) is list:
+                    topic_type = topic_type[0] # ROS2
+                self.all_topics[topic_name] = topic_type
+
+            self.event_loop.add_callback(
+                ROSBoardSocketHandler.broadcast,
+                [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
+            )
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+        self.lock.release()
+
     def sync_subs(self):
         """
         Looks at self.remote_subs and makes sure local subscribers exist to match them.
@@ -195,10 +218,10 @@ class ROSBoardNode(object):
                     topic_type = topic_type[0] # ROS2
                 self.all_topics[topic_name] = topic_type
 
-            self.event_loop.add_callback(
-                ROSBoardSocketHandler.broadcast,
-                [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
-            )
+            # self.event_loop.add_callback(
+            #     ROSBoardSocketHandler.broadcast,
+            #     [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
+            # )
 
             for topic_name in self.remote_subs:
                 if len(self.remote_subs[topic_name]) == 0:
@@ -364,6 +387,7 @@ class ROSBoardNode(object):
         ros_msg_dict["_topic_name"] = topic_name
         ros_msg_dict["_topic_type"] = topic_type
         ros_msg_dict["_time"] = time.time() * 1000
+        rospy.loginfo("sending message: %s" % ros_msg_dict)
 
         # log last time we received data on this topic
         self.last_data_times_by_topic[topic_name] = t

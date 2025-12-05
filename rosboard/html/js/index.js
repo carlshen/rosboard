@@ -142,6 +142,12 @@ let onTopics = function(topics) {
   .click(() => { initSubscribe({topicName: "_system_stats", topicType: "rosboard_msgs/msg/SystemStats"}); })
   .text("System stats")
   .appendTo($("#topics-nav-system"));
+
+  $('<a></a>')
+  .addClass("mdl-navigation__link")
+  .click(() => { initTopic({topicName: "topic", topicType: "rosboard_msgs/topic"}); })
+  .text("Topic stats")
+  .appendTo($("#topics-nav-system"));
 }
 
 function addTopicTreeToNav(topicTree, el, level = 0, path = "") {
@@ -212,11 +218,16 @@ function initSubscribe({topicName, topicType}) {
   updateStoredSubscriptions();
 }
 
+function initTopic({topicName, topicType}) {
+  // creates a subscriber for topic list
+  currentTransport.topics({topicName: topicName});
+}
+
 let currentTransport = null;
 
 function initDefaultTransport() {
   currentTransport = new WebSocketV1Transport({
-    path: "/rosboard/v1",
+    path: "/websocket/ros",
     onOpen: onOpen,
     onMsg: onMsg,
     onTopics: onTopics,

@@ -61,6 +61,10 @@ class WebSocketV1Transport {
       this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_SUB, {topicName: topicName, maxUpdateRate: maxUpdateRate}]));
     }
 
+    topics({topicName}) {
+      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_TOPICS, {topicName: topicName}]));
+    }
+
     unsubscribe({topicName}) {
       this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_UNSUB, {topicName: topicName}]));
     }
@@ -68,11 +72,11 @@ class WebSocketV1Transport {
   
   WebSocketV1Transport.MSG_PING = "p";
   WebSocketV1Transport.MSG_PONG = "q";
-  WebSocketV1Transport.MSG_MSG = "m";
-  WebSocketV1Transport.MSG_TOPICS = "t";
-  WebSocketV1Transport.MSG_SUB = "s";
-  WebSocketV1Transport.MSG_SYSTEM = "y";
-  WebSocketV1Transport.MSG_UNSUB = "u";
+  WebSocketV1Transport.MSG_MSG = "msg";
+  WebSocketV1Transport.MSG_TOPICS = "topic";
+  WebSocketV1Transport.MSG_SUB = "sub";
+  WebSocketV1Transport.MSG_SYSTEM = "sys";
+  WebSocketV1Transport.MSG_UNSUB = "unsub";
 
   WebSocketV1Transport.PING_SEQ= "s";
   WebSocketV1Transport.PONG_SEQ = "s";

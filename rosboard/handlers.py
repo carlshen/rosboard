@@ -46,6 +46,11 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
 
         ROSBoardSocketHandler.sockets.add(self)
 
+        self.node.sync_topics()
+        print("open msg: %s" % json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
+            "hostname": self.node.title,
+            "version": __version__,
+        }], separators=(',', ':')))
         self.write_message(json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
             "hostname": self.node.title,
             "version": __version__,
@@ -88,6 +93,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         try:
             if message[0] == ROSBoardSocketHandler.MSG_TOPICS:
                 json_msg = json.dumps(message, separators=(',', ':'))
+                print("topics message: %s" % json_msg)
                 for socket in cls.sockets:
                     if socket.ws_connection and not socket.ws_connection.is_closing():
                         socket.write_message(json_msg)
@@ -166,6 +172,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("error: no topic specified")
                 return
 
+            print("message: sub: %s" % message)
             if topic_name not in self.node.remote_subs:
                 self.node.remote_subs[topic_name] = set()
 
@@ -179,6 +186,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 return
             topic_name = argv[1].get("topicName")
 
+            print("message: unsub: %s" % message)
             if topic_name not in self.node.remote_subs:
                 self.node.remote_subs[topic_name] = set()
 
@@ -186,14 +194,19 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 self.node.remote_subs[topic_name].remove(self.id)
             except KeyError:
                 print("KeyError trying to remove sub")
+        # client wants to query topics
+        elif argv[0] == ROSBoardSocketHandler.MSG_TOPICS:
+            # all topics and their types as strings
+            print("message: topic: %s" % message)
+            self.node.sync_topics()
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
-ROSBoardSocketHandler.MSG_MSG = "m";
-ROSBoardSocketHandler.MSG_TOPICS = "t";
-ROSBoardSocketHandler.MSG_SUB = "s";
-ROSBoardSocketHandler.MSG_SYSTEM = "y";
-ROSBoardSocketHandler.MSG_UNSUB = "u";
+ROSBoardSocketHandler.MSG_MSG = "msg";
+ROSBoardSocketHandler.MSG_TOPICS = "topic";
+ROSBoardSocketHandler.MSG_SUB = "sub";
+ROSBoardSocketHandler.MSG_SYSTEM = "sys";
+ROSBoardSocketHandler.MSG_UNSUB = "unsub";
 
 ROSBoardSocketHandler.PING_SEQ = "s";
 ROSBoardSocketHandler.PONG_SEQ = "s";
