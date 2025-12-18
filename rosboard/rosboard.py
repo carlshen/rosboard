@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 
+import json
+import peewee
+import peewee_async
+from typing import Any, Optional
+from pypcd4 import Encoding, MetaData, PointCloud
+import redis
+import queue
+from datetime import datetime
+from pathlib import Path
 import asyncio
 import importlib
 import os
@@ -11,9 +20,11 @@ import traceback
 
 if os.environ.get("ROS_VERSION") == "1":
     import rospy # ROS1
+    from rospy_message_converter import message_converter
 elif os.environ.get("ROS_VERSION") == "2":
     import rosboard.rospy2 as rospy # ROS2
     from rclpy.qos import HistoryPolicy, QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
+    from rclpy_message_converter import message_converter
 else:
     print("ROS not detected. Please source your ROS environment\n(e.g. 'source /opt/ros/DISTRO/setup.bash')")
     exit(1)
@@ -26,10 +37,14 @@ from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
+from rosboard.config import SAVE_DIR, FILE_TYPE
+from rosboard.models import InfraFile
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointField
 
 class ROSBoardNode(object):
     instance = None
-    def __init__(self, node_name = "rosboard_node"):
+    def __init__(self, node_name = "rosboard_rosnode"):
         self.__class__.instance = self
         rospy.init_node(node_name)
         self.port = rospy.get_param("~port", 8888)
@@ -93,6 +108,15 @@ class ROSBoardNode(object):
 
         # loop to keep track of latencies and clock differences for each socket
         threading.Thread(target = self.pingpong_loop, daemon = True).start()
+
+        # data dir for save pcd file, and redis client
+        self.DATA_DIR = Path.home() / SAVE_DIR
+        self.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self.redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+        self.message_queue = queue.Queue(maxsize=10)
+        self.message_num = 0
+        # loop to keep track of message for save pcd file
+        threading.Thread(target = self.savefile_loop, daemon = True).start()
 
         self.lock = threading.Lock()
 
@@ -175,7 +199,57 @@ class ROSBoardNode(object):
             time.sleep(1)
             self.sync_subs()
 
-    def sync_topics(self):
+    def savefile_loop(self):
+        """
+        Periodically calls save file for queue. Intended to be run in a thread.
+        """
+        while True:
+            try:
+                # 从队列获取消息（阻塞等待，直到有消息或超时）
+                message = self.message_queue.get()
+
+                # 处理消息
+                if message is None:
+                    continue
+                self.process_message(message)
+
+                # 标记任务完成
+                self.message_queue.task_done()
+
+            except Exception as e:
+                print(f"[savefile_loop] exception: {e}")
+
+    def process_message(self, msg: json):
+        if msg is None:
+            print("process_message msg is None.")
+            return
+        msg.pop("_topic_name", None)
+        msg.pop("_topic_type", None)
+        msg.pop("_time", None)
+        file_path = msg.pop("_file_path", None)
+        if file_path is None:
+            print("process_message file_path is None, need generate.")
+            file_path = self.generate_filename()
+        ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
+        # transfer to PointCloud from ROS PointCloud2 message
+        pc = PointCloud.from_msg(ros_msg)
+        pc.save(file_path)
+        if file_path.is_file():
+            print("process_message: save file ok, save to db: %s" % file_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(file_path).name
+            saveFile.path = str(Path(file_path).resolve())
+            saveFile.url = ""
+            saveFile.type = "pcd"
+            saveFile.size = os.path.getsize(file_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        else:
+            print("process_message: save file error: %s" % file_path)
+
+    def sync_topics(self, sock):
         # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
         self.lock.acquire()
         try:
@@ -189,10 +263,17 @@ class ROSBoardNode(object):
                     topic_type = topic_type[0] # ROS2
                 self.all_topics[topic_name] = topic_type
 
-            self.event_loop.add_callback(
-                ROSBoardSocketHandler.broadcast,
-                [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
-            )
+            if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                json_msg = json.dumps([ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ], separators=(',', ':'))
+                print("sync_topics message: %s" % json_msg)
+                sock.write_message(json_msg)
+                # sync the cached redis mesage to socket client
+                if self.has_key("/global_map"):
+                    json_msg = self.load_json("/global_map")
+                    # print("sync_topics get message: %s" % json.dumps(json_msg))
+                    print("sync_topics for cached message len: %s" % len(json.dumps(json_msg)))
+                    sock.write_message(json.dumps(json_msg))
+
         except Exception as e:
             rospy.logwarn(str(e))
             traceback.print_exc()
@@ -381,13 +462,14 @@ class ROSBoardNode(object):
             return
 
         # convert ROS message into a dict and get it ready for serialization
-        ros_msg_dict = ros2dict(msg)
+        #ros_msg_dict = ros2dict(msg)
+        ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
 
         # add metadata
         ros_msg_dict["_topic_name"] = topic_name
         ros_msg_dict["_topic_type"] = topic_type
         ros_msg_dict["_time"] = time.time() * 1000
-        rospy.loginfo("sending message: %s" % ros_msg_dict)
+        # rospy.loginfo("sending message: %s" % ros_msg_dict)
 
         # log last time we received data on this topic
         self.last_data_times_by_topic[topic_name] = t
@@ -397,6 +479,37 @@ class ROSBoardNode(object):
             ROSBoardSocketHandler.broadcast,
             [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
         )
+        if topic_name == "/global_map":
+            # store it to the redis cache as well
+            json_msg = [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
+            # print("sync_topics set message: %s" % json_msg)
+            self.cache_json(topic_name, json_msg)
+
+    def cache_json(self, key: str, data: Any, expire_seconds: Optional[int] = None) -> None:
+        """将任意可 JSON 序列化的数据写入 Redis 指定 key，可选过期时间（秒）"""
+        json_str = json.dumps(data, separators=(',', ':'))
+        self.redis_client.set(name=key, value=json_str, ex=expire_seconds)
+
+    def has_key(self, key: str) -> bool:
+        """判断 Redis 中是否存在指定 key"""
+        return bool(self.redis_client.exists(key))
+
+    def load_json(self, key: str) -> Optional[Any]:
+        """读取并解析指定 key 的 JSON 数据，不存在则返回 None"""
+        json_str = self.redis_client.get(key)
+        if json_str is None:
+            return None
+        return json.loads(json_str)
+
+    def generate_filename(self) -> Path:
+        """生成类似 point_20251217_142305_123 的文件名（精确到毫秒）"""
+        now = datetime.now()
+        # 日期时间部分
+        dt_str = now.strftime("%Y%m%d_%H%M%S")
+        # 毫秒部分
+        mmm = f"{now.microsecond // 1000:03d}"
+        filename = f"point_{dt_str}_{mmm}{FILE_TYPE}"
+        return self.DATA_DIR / filename
 
 def main(args=None):
     ROSBoardNode().start()

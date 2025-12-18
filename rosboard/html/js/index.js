@@ -101,9 +101,19 @@ let onMsg = function(msg) {
     console.log("Received msg but no viewer", msg);
   } else {
     subscriptions[msg._topic_name].viewer.update(msg);
+    console.log("Received message", msg._topic_name);
+    if (msg._topic_name === "/global_map" && pcdSave < 1) {
+      currentTransport.savePcd(msg);
+      pcdSave++;
+    } else if (msg._topic_name === "/global_map_2D" && pgmSave < 1) {
+      currentTransport.savePgm(msg);
+      pgmSave++;
+    }
   }
 }
 
+let pcdSave = 0;
+let pgmSave = 0;
 let currentTopics = {};
 let currentTopicsStr = "";
 

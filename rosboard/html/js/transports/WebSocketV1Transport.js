@@ -65,6 +65,14 @@ class WebSocketV1Transport {
       this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_TOPICS, {topicName: topicName}]));
     }
 
+    savePcd(msg) {
+      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_PCD, msg]));
+    }
+
+    savePgm(msg) {
+      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_PGM, msg]));
+    }
+
     unsubscribe({topicName}) {
       this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_UNSUB, {topicName: topicName}]));
     }
@@ -77,6 +85,13 @@ class WebSocketV1Transport {
   WebSocketV1Transport.MSG_SUB = "sub";
   WebSocketV1Transport.MSG_SYSTEM = "sys";
   WebSocketV1Transport.MSG_UNSUB = "unsub";
+WebSocketV1Transport.MSG_PCD = "pcd";
+WebSocketV1Transport.MSG_PGM = "pgm";
+WebSocketV1Transport.MSG_TASK = "task";
+WebSocketV1Transport.MSG_DEVICE = "device";
+WebSocketV1Transport.MSG_LOG = "log";
+WebSocketV1Transport.MSG_CLOUD = "cloud";
+WebSocketV1Transport.MSG_MAP = "map";
 
   WebSocketV1Transport.PING_SEQ= "s";
   WebSocketV1Transport.PONG_SEQ = "s";

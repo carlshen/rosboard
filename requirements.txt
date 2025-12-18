@@ -1,2 +1,10 @@
-tornado
+tornado>=6.2
 simplejpeg
+redis
+numpy>=1.20.0
+pypcd4>=0.1.0  # 用于PCD文件处理
+jinja2>=3.0.3
+open3d>=0.13.0  # 用于PLY文件处理（可选，如果不安装则使用手动写入方式）
+aiomysql==0.1.0
+peewee==3.14.10
+peewee-async==0.7.0

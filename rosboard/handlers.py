@@ -46,11 +46,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
 
         ROSBoardSocketHandler.sockets.add(self)
 
-        self.node.sync_topics()
-        print("open msg: %s" % json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
-            "hostname": self.node.title,
-            "version": __version__,
-        }], separators=(',', ':')))
+        self.node.sync_topics(self)
         self.write_message(json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
             "hostname": self.node.title,
             "version": __version__,
@@ -198,7 +194,36 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         elif argv[0] == ROSBoardSocketHandler.MSG_TOPICS:
             # all topics and their types as strings
             print("message: topic: %s" % message)
-            self.node.sync_topics()
+            self.node.sync_topics(self.socket)
+        elif argv[0] == ROSBoardSocketHandler.MSG_PCD:
+            # save to file and insert into DB
+            # print("message: file: %s" % message)
+            point_cloud_data = argv[1]
+            if point_cloud_data is not None:
+                # print("message: point_cloud_data len: %s" % len(json.dumps(point_cloud_data)))
+                file_path = self.node.generate_filename()
+                point_cloud_data["_file_path"] = file_path
+                # print("message: point_cloud_data file_path: %s" % file_path)
+                self.node.message_queue.put(point_cloud_data)
+                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
+                json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "message": "Point cloud data saved successfully",
+                        "file_path": file_path.__str__(),
+                    }]
+                print("message: save point_cloud_data: %s" % json_ok)
+                self.socket.write_message(json_ok)
+            else:
+                json_err = [
+                    ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": -100,
+                        "message": "no point cloud data to save",
+                        "file_path": ""
+                    }]
+                print("message: point_cloud_data: %s" % json_err)
+                self.socket.write_message(json_err)
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
@@ -207,6 +232,13 @@ ROSBoardSocketHandler.MSG_TOPICS = "topic";
 ROSBoardSocketHandler.MSG_SUB = "sub";
 ROSBoardSocketHandler.MSG_SYSTEM = "sys";
 ROSBoardSocketHandler.MSG_UNSUB = "unsub";
+ROSBoardSocketHandler.MSG_PCD = "pcd";
+ROSBoardSocketHandler.MSG_PGM = "pgm";
+ROSBoardSocketHandler.MSG_TASK = "task";
+ROSBoardSocketHandler.MSG_DEVICE = "device";
+ROSBoardSocketHandler.MSG_LOG = "log";
+ROSBoardSocketHandler.MSG_CLOUD = "cloud";
+ROSBoardSocketHandler.MSG_MAP = "map";
 
 ROSBoardSocketHandler.PING_SEQ = "s";
 ROSBoardSocketHandler.PONG_SEQ = "s";
