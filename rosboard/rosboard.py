@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import yaml
 import peewee
 import peewee_async
 from typing import Any, Optional
@@ -39,6 +40,7 @@ from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE
 from rosboard.models import InfraFile
+from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
 
@@ -211,7 +213,12 @@ class ROSBoardNode(object):
                 # 处理消息
                 if message is None:
                     continue
-                self.process_message(message)
+                if message.get("_topic_name", "") == "/global_map":
+                    self.process_message(message)
+                elif message.get("_topic_name", "") == "/global/GridMap":
+                    self.save_map(message)
+                else:
+                    print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
 
                 # 标记任务完成
                 self.message_queue.task_done()
@@ -484,6 +491,14 @@ class ROSBoardNode(object):
             json_msg = [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
             # print("sync_topics set message: %s" % json_msg)
             self.cache_json(topic_name, json_msg)
+        elif topic_name == "/global/GridMap":
+            # store it to the redis cache as well
+            # if (self.message_num < 1):
+            #     self.message_num += 1
+            #     print("cache_json message num: %s" % self.message_num)
+            #     file_path = self.map_filename()
+            #     ros_msg_dict["_file_path"] = file_path
+            #     self.message_queue.put(ros_msg_dict)
 
     def cache_json(self, key: str, data: Any, expire_seconds: Optional[int] = None) -> None:
         """将任意可 JSON 序列化的数据写入 Redis 指定 key，可选过期时间（秒）"""
@@ -510,6 +525,92 @@ class ROSBoardNode(object):
         mmm = f"{now.microsecond // 1000:03d}"
         filename = f"point_{dt_str}_{mmm}{FILE_TYPE}"
         return self.DATA_DIR / filename
+
+    def map_filename(self) -> Path:
+        """生成类似 point_20251217_142305_123 的文件名（精确到毫秒）"""
+        now = datetime.now()
+        # 日期时间部分
+        dt_str = now.strftime("%Y%m%d_%H%M%S")
+        # 毫秒部分
+        mmm = f"{now.microsecond // 1000:03d}"
+        filename = f"point_{dt_str}_{mmm}"
+        return self.DATA_DIR / filename
+
+    def save_map(self, msg: json):
+        if msg is None:
+            print("save_map msg is None.")
+            return
+        msg.pop("_topic_name", None)
+        msg.pop("_topic_type", None)
+        msg.pop("_time", None)
+        base = msg.pop("_file_path", None)
+        if base is None:
+            print("save_map file_path is None, need generate.")
+            base = self.map_filename()
+        pgm_path = base.__str__() + ".pgm"
+        yaml_path = base.__str__() + ".yaml"
+        ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', msg)
+        # Save image (simple PGM) and YAML metadata compatible with yaml_server
+        self.save_pgm(ros_msg, pgm_path)
+        self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
+        # save to db for map files
+        if os.path.exists(pgm_path):
+            print("save_map: save pgm_path ok, save to db: %s" % pgm_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(pgm_path).name
+            saveFile.path = str(Path(pgm_path).resolve())
+            saveFile.url = ""
+            saveFile.type = "pgm"
+            saveFile.size = os.path.getsize(pgm_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        else:
+            print("save_map: save pgm_path error: %s" % yaml_path)
+        if os.path.exists(yaml_path):
+            print("save_map: save yaml_path ok, save to db: %s" % yaml_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(yaml_path).name
+            saveFile.path = str(Path(yaml_path).resolve())
+            saveFile.url = ""
+            saveFile.type = "yaml"
+            saveFile.size = os.path.getsize(yaml_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        else:
+            print("save_map: save yaml_path error: %s" % yaml_path)
+
+    def save_pgm(self, msg: OccupancyGrid, path: str):
+        width, height = msg.info.width, msg.info.height
+        data = msg.data  # list[int] length w*h
+        with open(path, "wb") as f:
+            f.write(f"P5\n{width} {height}\n255\n".encode())
+            for v in data:
+                # Convert occupancy to grayscale: unknown=205, occupied=0, free=254
+                if v == -1:
+                    g = 205
+                elif v >= 50:
+                    g = 0
+                else:
+                    g = 254
+                f.write(bytes([g]))
+
+    def save_yaml(self, msg: OccupancyGrid, yaml_path: str, pgm_name: str):
+        info: MapMetaData = msg.info
+        origin = info.origin.position
+        data = {
+            "image": pgm_name,
+            "resolution": info.resolution,
+            "origin": [origin.x, origin.y, 0.0],
+            "negate": 0,
+            "occupied_thresh": 0.65,
+            "free_thresh": 0.196,
+        }
+        with open(yaml_path, "w") as f:
+            yaml.dump(data, f)
 
 def main(args=None):
     ROSBoardNode().start()

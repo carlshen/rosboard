@@ -224,6 +224,35 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                     }]
                 print("message: point_cloud_data: %s" % json_err)
                 self.socket.write_message(json_err)
+        elif argv[0] == ROSBoardSocketHandler.MSG_PGM:
+            # save to file and insert into DB
+            # print("message: file: %s" % message)
+            point_cloud_map = argv[1]
+            if point_cloud_map is not None:
+                # print("message: point_cloud_map len: %s" % len(json.dumps(point_cloud_map)))
+                file_path = self.node.map_filename()
+                point_cloud_map["_file_path"] = file_path
+                # print("message: point_cloud_map file_path: %s" % file_path)
+                self.node.message_queue.put(point_cloud_map)
+                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
+                json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "message": "Point cloud map saved successfully",
+                        "file_path": file_path.__str__(),
+                    }]
+                print("message: save point_cloud_map: %s" % json_ok)
+                self.socket.write_message(json_ok)
+            else:
+                json_err = [
+                    ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": -100,
+                        "message": "no point cloud data to save",
+                        "file_path": ""
+                    }]
+                print("message: point_cloud_map: %s" % json_err)
+                self.socket.write_message(json_err)
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
