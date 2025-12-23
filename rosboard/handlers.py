@@ -155,7 +155,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("error: sub: bad: %s" % message)
                 return
 
-            topic_name = argv[1].get("topicName")
+            topic_name = argv[1].get("_topic_name")
             max_update_rate = float(argv[1].get("maxUpdateRate", 24.0))
 
             self.update_intervals_by_topic[topic_name] = 1.0 / max_update_rate
@@ -180,7 +180,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             if len(argv) != 2 or type(argv[1]) is not dict:
                 print("error: unsub: bad: %s" % message)
                 return
-            topic_name = argv[1].get("topicName")
+            topic_name = argv[1].get("_topic_name")
 
             print("message: unsub: %s" % message)
             if topic_name not in self.node.remote_subs:
@@ -195,6 +195,21 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             # all topics and their types as strings
             print("message: topic: %s" % message)
             self.node.sync_topics(self.socket)
+        elif argv[0] == ROSBoardSocketHandler.MSG_TASK:
+            # send list of current tasks
+            print("message: task: %s" % message)
+            task_data = argv[1]
+            if task_data is not None:
+                self.node.sync_tasks(self.socket, task_data)
+            else:
+                json_err = [
+                    ROSBoardSocketHandler.MSG_TASK,
+                    {
+                        "code": -100,
+                        "message": "no task data to send",
+                    }]
+                print("message: task_data: %s" % json_err)
+                self.socket.write_message(json_err)
         elif argv[0] == ROSBoardSocketHandler.MSG_PCD:
             # save to file and insert into DB
             # print("message: file: %s" % message)

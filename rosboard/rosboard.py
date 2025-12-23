@@ -43,6 +43,7 @@ from rosboard.models import InfraFile
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
+from geometry_msgs.msg import PoseStamped
 
 class ROSBoardNode(object):
     instance = None
@@ -286,6 +287,32 @@ class ROSBoardNode(object):
             traceback.print_exc()
         self.lock.release()
 
+    def sync_tasks(self, sock: socket, msg: json):
+        # send task data to ros
+        if msg is None or sock is None:
+            print("sync_tasks msg is None.")
+            return
+        try:
+            topic_name = msg.pop("_topic_name", None)
+            topic_type = msg.pop("_topic_type", None)
+            ros_msg = message_converter.convert_dictionary_to_ros_message('geometry_msgs/PoseStamped', msg)
+            if ros_msg is not None and not rospy.is_shutdown():
+                pub = rospy.Publisher(topic_name, PoseStamped, queue_size=10)
+                pub.publish(ros_msg)
+
+            if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                    {
+                        "code": 0,
+                        "message": "task data send successfully",
+                    }]
+                print("message: save task_data: %s" % json_ok)
+                sock.write_message(json_ok)
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
     def sync_subs(self):
         """
         Looks at self.remote_subs and makes sure local subscribers exist to match them.
@@ -493,9 +520,9 @@ class ROSBoardNode(object):
             self.cache_json(topic_name, json_msg)
         elif topic_name == "/global/GridMap":
             # store it to the redis cache as well
-            # if (self.message_num < 1):
-            #     self.message_num += 1
-            #     print("cache_json message num: %s" % self.message_num)
+            if (self.message_num < 1):
+                self.message_num += 1
+                print("cache_json message num: %s" % self.message_num)
             #     file_path = self.map_filename()
             #     ros_msg_dict["_file_path"] = file_path
             #     self.message_queue.put(ros_msg_dict)

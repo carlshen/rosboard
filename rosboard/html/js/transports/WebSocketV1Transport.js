@@ -58,7 +58,7 @@ class WebSocketV1Transport {
     }
   
     subscribe({topicName, maxUpdateRate = 24.0}) {
-      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_SUB, {topicName: topicName, maxUpdateRate: maxUpdateRate}]));
+      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_SUB, {_topic_name: topicName, maxUpdateRate: maxUpdateRate}]));
     }
 
     topics({topicName}) {
@@ -74,7 +74,7 @@ class WebSocketV1Transport {
     }
 
     unsubscribe({topicName}) {
-      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_UNSUB, {topicName: topicName}]));
+      this.ws.send(JSON.stringify([WebSocketV1Transport.MSG_UNSUB, {_topic_name: topicName}]));
     }
   }
   
