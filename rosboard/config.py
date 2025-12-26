@@ -1,5 +1,5 @@
 # mysql数据库配置
-mysql_db = "edu"
+mysql_db = "fy_project"
 mysql_user = "root"
 mysql_password = "12345678"
 mysql_host = "localhost"

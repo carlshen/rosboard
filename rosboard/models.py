@@ -39,10 +39,26 @@ class InfraFile(BaseModel):
     url = peewee.TextField(default='', verbose_name='url', help_text='文件URL')
     type = peewee.TextField(default='', verbose_name='type', help_text='文件类型')
     size = peewee.IntegerField(default=0, verbose_name='size', help_text='文件大小')
-    creator = peewee.TextField(verbose_name='creator', help_text='创建者')
-    updater = peewee.TextField(verbose_name='updater', help_text='更新者')
+    creator = peewee.TextField(default='', verbose_name='creator', help_text='创建者')
+    updater = peewee.TextField(default='', verbose_name='updater', help_text='更新者')
     deleted = peewee.IntegerField(default=0, verbose_name='deleted', help_text='是否删除')
 
     class Meta:
         db_table = "infra_file"
+
+
+# 设备
+class DeviceList(BaseModel):
+    device_name = peewee.TextField(default='', verbose_name='device_name', help_text='设备名称')
+    device_type = peewee.TextField(default='', verbose_name='device_type', help_text='设备类型')
+    device_ip = peewee.TextField(default='', verbose_name='device_ip', help_text='设备IP')
+    camera_ip = peewee.TextField(default='', verbose_name='camera_ip', help_text='设备相机IP')
+    device_id = peewee.TextField(default='', verbose_name='device_id', help_text='设备ID')
+    device_status = peewee.TextField(default=0, verbose_name='device_status', help_text='设备状态')
+    device_desc = peewee.TextField(default='', verbose_name='device_desc', help_text='设备描述')
+    creator = peewee.TextField(default='', verbose_name='creator', help_text='创建者')
+    updater = peewee.TextField(default='', verbose_name='updater', help_text='更新者')
+
+    class Meta:
+        db_table = "device_list"
 

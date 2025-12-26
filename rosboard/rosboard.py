@@ -18,6 +18,8 @@ import threading
 import time
 import tornado, tornado.web, tornado.websocket
 import traceback
+from playhouse.shortcuts import model_to_dict
+import requests
 
 if os.environ.get("ROS_VERSION") == "1":
     import rospy # ROS1
@@ -39,11 +41,12 @@ from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE
-from rosboard.models import InfraFile
+from rosboard.models import InfraFile, DeviceList
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
-from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Header
+from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 
 class ROSBoardNode(object):
     instance = None
@@ -257,6 +260,20 @@ class ROSBoardNode(object):
         else:
             print("process_message: save file error: %s" % file_path)
 
+    def sync_message(self, sock):
+        # sync cached message to socket client
+        try:
+            if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                if self.has_key("/global_map"):
+                    json_msg = self.load_json("/global_map")
+                    # print("sync_topics get message: %s" % json.dumps(json_msg))
+                    print("sync_message for cached message len: %s" % len(json.dumps(json_msg)))
+                    sock.write_message(json.dumps(json_msg))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
     def sync_topics(self, sock):
         # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
         self.lock.acquire()
@@ -275,12 +292,6 @@ class ROSBoardNode(object):
                 json_msg = json.dumps([ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ], separators=(',', ':'))
                 print("sync_topics message: %s" % json_msg)
                 sock.write_message(json_msg)
-                # sync the cached redis mesage to socket client
-                if self.has_key("/global_map"):
-                    json_msg = self.load_json("/global_map")
-                    # print("sync_topics get message: %s" % json.dumps(json_msg))
-                    print("sync_topics for cached message len: %s" % len(json.dumps(json_msg)))
-                    sock.write_message(json.dumps(json_msg))
 
         except Exception as e:
             rospy.logwarn(str(e))
@@ -295,19 +306,214 @@ class ROSBoardNode(object):
         try:
             topic_name = msg.pop("_topic_name", None)
             topic_type = msg.pop("_topic_type", None)
-            ros_msg = message_converter.convert_dictionary_to_ros_message('geometry_msgs/PoseStamped', msg)
-            if ros_msg is not None and not rospy.is_shutdown():
+            # print("process_tasks: task msg: %s" % msg)
+            if msg is not None and not rospy.is_shutdown():
+                header = Header(stamp=msg['header']['stamp'], frame_id=msg['header']['frame_id'])
+                position = Point(x=msg['pose']['position']['x'], y=msg['pose']['position']['y'], z=msg['pose']['position']['z'])
+                orientation = Quaternion(x=msg['pose']['orientation']['x'], y=msg['pose']['orientation']['y'], z=msg['pose']['orientation']['z'], w=msg['pose']['orientation']['w'])
+                pose = Pose(position=position, orientation=orientation)
+                pose_stamp = PoseStamped(header=header, pose=pose)
                 pub = rospy.Publisher(topic_name, PoseStamped, queue_size=10)
-                pub.publish(ros_msg)
-
-            if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                pub.publish(pose_stamp)
+                rospy.loginfo("Published message pose_stamp: %s", pose_stamp)
                 json_ok = [ROSBoardSocketHandler.MSG_TASK,
                     {
                         "code": 0,
+                        "_topic_name": topic_name,
+                        "_topic_type": topic_type,
                         "message": "task data send successfully",
+                   }]
+                print("sync_tasks task_data ok: %s" % json_ok)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            else:
+                print("process_tasks task_data error for rosmsg is none.")
+                json_err = [ROSBoardSocketHandler.MSG_TASK,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "_topic_type": topic_type,
+                        "message": "task data send successfully",
+                   }]
+                print("sync_tasks task_data err: %s" % json_err)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_device(self, sock: socket, msg: json):
+        # save device data to server
+        if msg is None or sock is None:
+            print("sync_device msg is None.")
+            return
+        try:
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "add":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("save_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        saveDevice = DeviceList.create()
+                        saveDevice.device_name = device.get("device_name")
+                        saveDevice.device_type = device.get("device_type")
+                        saveDevice.device_ip = device.get("device_ip")
+                        saveDevice.camera_ip = device.get("camera_ip")
+                        saveDevice.device_status = 0
+                        saveDevice.creator = "ros"
+                        saveDevice.updater = "ros"
+                        saveDevice.save()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device save successfully",
                     }]
-                print("message: save task_data: %s" % json_ok)
-                sock.write_message(json_ok)
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_ok))
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "device save failed",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json_err)
+            elif topic_name == "del":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("delete_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        delDevice = DeviceList.get_by_id(device.get("id"))
+                        if delDevice is not None:
+                            delDevice.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device delete successfully",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_ok))
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "device delete failed",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_err))
+            elif topic_name == "update":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("update_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        saveDevice = DeviceList.get_by_id(device.get("id"))
+                        if saveDevice is not None:
+                            saveDevice.device_name = device.get("device_name")
+                            saveDevice.device_type = device.get("device_type")
+                            saveDevice.device_ip = device.get("device_ip")
+                            saveDevice.camera_ip = device.get("camera_ip")
+                            saveDevice.save()
+                        else:
+                            saveDevice = DeviceList.create()
+                            saveDevice.device_name = device.get("device_name")
+                            saveDevice.device_type = device.get("device_type")
+                            saveDevice.device_ip = device.get("device_ip")
+                            saveDevice.camera_ip = device.get("camera_ip")
+                            saveDevice.device_status = 0
+                            saveDevice.creator = "ros"
+                            saveDevice.updater = "ros"
+                            saveDevice.save()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device update successfully",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_ok))
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "device update failed",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_err))
+            elif topic_name == "query":
+                devices = DeviceList.select()
+                device_list = [model_to_dict(device) for device in devices]
+                json_list = []
+                if device_list is not None and len(device_list) > 0:
+                    print("query_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        jDevice = {}
+                        jDevice["id"] = device["id"]
+                        jDevice["device_name"] = device["device_name"]
+                        jDevice["device_ip"] = device["device_ip"]
+                        jDevice["device_type"] = device["device_type"]
+                        jDevice["camera_ip"] = device["camera_ip"]
+                        json_list.append(jDevice)
+                json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "_device_list": json_list,
+                        "message": "device query successfully",
+                    }]
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "topic_name not found.",
+                    }]
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_video(self, sock: socket, msg: json):
+        # send video data to Media server
+        if msg is None or sock is None:
+            print("sync_video msg is None.")
+            return
+        try:
+            topic_name = msg.get("_topic_name")
+            topic_type = msg.get("_topic_type")
+            if topic_name == "rtsp":
+                json_list = []
+                ip_list = msg.pop("_ip_list", None)
+                if ip_list is not None and len(ip_list) > 0:
+                    for ip in ip_list:
+                        url = "rtsp://%s:5554/live/push" % ip
+                        json_list.append(url)
+                msg["code"] = 0
+                msg["_url_list"] = json_list
+                json_ok = [
+                    ROSBoardSocketHandler.MSG_VIDEO,
+                    msg]
+                print("message: video_data ok: %s" % json_ok)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            else:
+                msg["code"] = -1
+                msg["_url_list"] = []
+                json_err = [
+                    ROSBoardSocketHandler.MSG_VIDEO,
+                    msg]
+                print("message: video_data not support: %s" % json_err)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
 
         except Exception as e:
             rospy.logwarn(str(e))
@@ -518,7 +724,7 @@ class ROSBoardNode(object):
             json_msg = [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
             # print("sync_topics set message: %s" % json_msg)
             self.cache_json(topic_name, json_msg)
-        elif topic_name == "/global/GridMap":
+        elif topic_name == "/grid_map2D":
             # store it to the redis cache as well
             if (self.message_num < 1):
                 self.message_num += 1

@@ -51,6 +51,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             "hostname": self.node.title,
             "version": __version__,
         }], separators=(',', ':')))
+        self.node.sync_message(self)
 
     def on_close(self):
         ROSBoardSocketHandler.sockets.remove(self)
@@ -194,13 +195,13 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         elif argv[0] == ROSBoardSocketHandler.MSG_TOPICS:
             # all topics and their types as strings
             print("message: topic: %s" % message)
-            self.node.sync_topics(self.socket)
+            self.node.sync_topics(self)
         elif argv[0] == ROSBoardSocketHandler.MSG_TASK:
             # send list of current tasks
-            print("message: task: %s" % message)
+            # print("message: task: %s" % message)
             task_data = argv[1]
             if task_data is not None:
-                self.node.sync_tasks(self.socket, task_data)
+                self.node.sync_tasks(self, task_data)
             else:
                 json_err = [
                     ROSBoardSocketHandler.MSG_TASK,
@@ -209,7 +210,36 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         "message": "no task data to send",
                     }]
                 print("message: task_data: %s" % json_err)
-                self.socket.write_message(json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json.dumps(json_err))
+        elif argv[0] == ROSBoardSocketHandler.MSG_DEVICE:
+            # send message of current device
+            # print("message: device: %s" % message)
+            device_data = argv[1]
+            if device_data is not None:
+                self.node.sync_device(self, device_data)
+            else:
+                device_data["code"] = -100
+                json_err = [
+                    ROSBoardSocketHandler.MSG_DEVICE,
+                    device_data]
+                print("message: device_data: %s" % json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_err)
+        elif argv[0] == ROSBoardSocketHandler.MSG_VIDEO:
+            # send message of current video
+            # print("message: video: %s" % message)
+            video_data = argv[1]
+            if video_data is not None:
+                self.node.sync_video(self, video_data)
+            else:
+                video_data["code"] = -100
+                json_err = [
+                    ROSBoardSocketHandler.MSG_VIDEO,
+                    video_data]
+                print("message: video_data: %s" % json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_err)
         elif argv[0] == ROSBoardSocketHandler.MSG_PCD:
             # save to file and insert into DB
             # print("message: file: %s" % message)
@@ -228,7 +258,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         "file_path": file_path.__str__(),
                     }]
                 print("message: save point_cloud_data: %s" % json_ok)
-                self.socket.write_message(json_ok)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_ok)
             else:
                 json_err = [
                     ROSBoardSocketHandler.MSG_PCD,
@@ -238,7 +269,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         "file_path": ""
                     }]
                 print("message: point_cloud_data: %s" % json_err)
-                self.socket.write_message(json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_err)
         elif argv[0] == ROSBoardSocketHandler.MSG_PGM:
             # save to file and insert into DB
             # print("message: file: %s" % message)
@@ -257,7 +289,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         "file_path": file_path.__str__(),
                     }]
                 print("message: save point_cloud_map: %s" % json_ok)
-                self.socket.write_message(json_ok)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_ok)
             else:
                 json_err = [
                     ROSBoardSocketHandler.MSG_PGM,
@@ -267,7 +300,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         "file_path": ""
                     }]
                 print("message: point_cloud_map: %s" % json_err)
-                self.socket.write_message(json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json_err)
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
@@ -283,6 +317,7 @@ ROSBoardSocketHandler.MSG_DEVICE = "device";
 ROSBoardSocketHandler.MSG_LOG = "log";
 ROSBoardSocketHandler.MSG_CLOUD = "cloud";
 ROSBoardSocketHandler.MSG_MAP = "map";
+ROSBoardSocketHandler.MSG_VIDEO = "video";
 
 ROSBoardSocketHandler.PING_SEQ = "s";
 ROSBoardSocketHandler.PONG_SEQ = "s";

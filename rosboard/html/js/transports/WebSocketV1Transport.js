@@ -92,6 +92,7 @@ WebSocketV1Transport.MSG_DEVICE = "device";
 WebSocketV1Transport.MSG_LOG = "log";
 WebSocketV1Transport.MSG_CLOUD = "cloud";
 WebSocketV1Transport.MSG_MAP = "map";
+WebSocketV1Transport.MSG_VIDEO = "video";
 
   WebSocketV1Transport.PING_SEQ= "s";
   WebSocketV1Transport.PONG_SEQ = "s";

@@ -105,7 +105,7 @@ let onMsg = function(msg) {
     if (msg._topic_name === "/global_map" && pcdSave < 1) {
       currentTransport.savePcd(msg);
       pcdSave++;
-    } else if (msg._topic_name === "/global/GridMap" && pgmSave < 1) {
+    } else if (msg._topic_name === "/grid_map2D" && pgmSave < 1) {
       console.log("Received message and seed pgmSave -------", pgmSave);
       currentTransport.savePgm(msg);
       pgmSave++;
