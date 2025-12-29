@@ -109,6 +109,8 @@ let onMsg = function(msg) {
       console.log("Received message and seed pgmSave -------", pgmSave);
       currentTransport.savePgm(msg);
       pgmSave++;
+    } else if (msg._topic_name === "/rosout") {
+      console.log("Received message rosout: ", msg);
     }
   }
 }

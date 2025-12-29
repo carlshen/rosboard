@@ -205,6 +205,115 @@ class ROSBoardNode(object):
             time.sleep(1)
             self.sync_subs()
 
+    def sync_subs(self):
+        """
+        Looks at self.remote_subs and makes sure local subscribers exist to match them.
+        Also cleans up unused local subscribers for which there are no remote subs interested in them.
+        """
+
+        # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
+        self.lock.acquire()
+
+        try:
+            # all topics and their types as strings e.g. {"/foo": "std_msgs/String", "/bar": "std_msgs/Int32"}
+            self.all_topics = {}
+
+            for topic_tuple in rospy.get_published_topics():
+                topic_name = topic_tuple[0]
+                topic_type = topic_tuple[1]
+                if type(topic_type) is list:
+                    topic_type = topic_type[0] # ROS2
+                self.all_topics[topic_name] = topic_type
+
+            # self.event_loop.add_callback(
+            #     ROSBoardSocketHandler.broadcast,
+            #     [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
+            # )
+
+            for topic_name in self.remote_subs:
+                if len(self.remote_subs[topic_name]) == 0:
+                    continue
+
+                # remote sub special (non-ros) topic: _dmesg
+                # handle it separately here
+                if topic_name == "_dmesg":
+                    if topic_name not in self.local_subs:
+                        rospy.loginfo("Subscribing to dmesg [non-ros]")
+                        self.local_subs[topic_name] = DMesgSubscriber(self.on_dmesg)
+                    continue
+
+                if topic_name == "_system_stats":
+                    if topic_name not in self.local_subs:
+                        rospy.loginfo("Subscribing to _system_stats [non-ros]")
+                        self.local_subs[topic_name] = SystemStatsSubscriber(self.on_system_stats)
+                    continue
+
+                if topic_name == "_top":
+                    if topic_name not in self.local_subs:
+                        rospy.loginfo("Subscribing to _top [non-ros]")
+                        self.local_subs[topic_name] = ProcessesSubscriber(self.on_top)
+                    continue
+
+                # check if remote sub request is not actually a ROS topic before proceeding
+                if topic_name not in self.all_topics:
+                    rospy.logwarn("warning: topic %s not found" % topic_name)
+                    continue
+
+                # if the local subscriber doesn't exist for the remote sub, create it
+                if topic_name not in self.local_subs:
+                    topic_type = self.all_topics[topic_name]
+                    msg_class = self.get_msg_class(topic_type)
+
+                    if msg_class is None:
+                        # invalid message type or custom message package not source-bashed
+                        # put a dummy subscriber in to avoid returning to this again.
+                        # user needs to re-run rosboard with the custom message files sourced.
+                        self.local_subs[topic_name] = DummySubscriber()
+                        self.event_loop.add_callback(
+                            ROSBoardSocketHandler.broadcast,
+                            [
+                                ROSBoardSocketHandler.MSG_MSG,
+                                {
+                                    "_topic_name": topic_name, # special non-ros topics start with _
+                                    "_topic_type": topic_type,
+                                    "_error": "Could not load message type '%s'. Are the .msg files for it source-bashed?" % topic_type,
+                                },
+                            ]
+                        )
+                        continue
+
+                    self.last_data_times_by_topic[topic_name] = 0.0
+
+                    rospy.loginfo("Subscribing to %s" % topic_name)
+
+                    kwargs = {}
+                    if rospy.__name__ == "rospy2":
+                        # In ros2 we also can pass QoS parameters to the subscriber.
+                        # To avoid incompatibilities we subscribe using the same Qos
+                        # of the topic's publishers
+                        kwargs = {"qos": self.get_topic_qos(topic_name)}
+                    self.local_subs[topic_name] = rospy.Subscriber(
+                        topic_name,
+                        self.get_msg_class(topic_type),
+                        self.on_ros_msg,
+                        callback_args = (topic_name, topic_type),
+                        **kwargs
+                    )
+
+            # clean up local subscribers for which remote clients have lost interest
+            for topic_name in list(self.local_subs.keys()):
+                if topic_name not in self.remote_subs or \
+                    len(self.remote_subs[topic_name]) == 0:
+                        rospy.loginfo("Unsubscribing from %s" % topic_name)
+                        self.local_subs[topic_name].unregister()
+                        del(self.local_subs[topic_name])
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+        self.lock.release()
+
     def savefile_loop(self):
         """
         Periodically calls save file for queue. Intended to be run in a thread.
@@ -219,7 +328,7 @@ class ROSBoardNode(object):
                     continue
                 if message.get("_topic_name", "") == "/global_map":
                     self.process_message(message)
-                elif message.get("_topic_name", "") == "/global/GridMap":
+                elif message.get("_topic_name", "") == "/grid_map2D":
                     self.save_map(message)
                 else:
                     print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
@@ -229,6 +338,7 @@ class ROSBoardNode(object):
 
             except Exception as e:
                 print(f"[savefile_loop] exception: {e}")
+                traceback.print_exc()
 
     def process_message(self, msg: json):
         if msg is None:
@@ -380,7 +490,7 @@ class ROSBoardNode(object):
                         "message": "device save failed",
                     }]
                     if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                        sock.write_message(json_err)
+                        sock.write_message(json.dumps(json_err))
             elif topic_name == "del":
                 device_list = msg.get("_device_list", None)
                 if device_list is not None and len(device_list) > 0:
@@ -518,115 +628,6 @@ class ROSBoardNode(object):
         except Exception as e:
             rospy.logwarn(str(e))
             traceback.print_exc()
-
-    def sync_subs(self):
-        """
-        Looks at self.remote_subs and makes sure local subscribers exist to match them.
-        Also cleans up unused local subscribers for which there are no remote subs interested in them.
-        """
-
-        # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
-        self.lock.acquire()
-
-        try:
-            # all topics and their types as strings e.g. {"/foo": "std_msgs/String", "/bar": "std_msgs/Int32"}
-            self.all_topics = {}
-
-            for topic_tuple in rospy.get_published_topics():
-                topic_name = topic_tuple[0]
-                topic_type = topic_tuple[1]
-                if type(topic_type) is list:
-                    topic_type = topic_type[0] # ROS2
-                self.all_topics[topic_name] = topic_type
-
-            # self.event_loop.add_callback(
-            #     ROSBoardSocketHandler.broadcast,
-            #     [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
-            # )
-
-            for topic_name in self.remote_subs:
-                if len(self.remote_subs[topic_name]) == 0:
-                    continue
-
-                # remote sub special (non-ros) topic: _dmesg
-                # handle it separately here
-                if topic_name == "_dmesg":
-                    if topic_name not in self.local_subs:
-                        rospy.loginfo("Subscribing to dmesg [non-ros]")
-                        self.local_subs[topic_name] = DMesgSubscriber(self.on_dmesg)
-                    continue
-
-                if topic_name == "_system_stats":
-                    if topic_name not in self.local_subs:
-                        rospy.loginfo("Subscribing to _system_stats [non-ros]")
-                        self.local_subs[topic_name] = SystemStatsSubscriber(self.on_system_stats)
-                    continue
-
-                if topic_name == "_top":
-                    if topic_name not in self.local_subs:
-                        rospy.loginfo("Subscribing to _top [non-ros]")
-                        self.local_subs[topic_name] = ProcessesSubscriber(self.on_top)
-                    continue
-
-                # check if remote sub request is not actually a ROS topic before proceeding
-                if topic_name not in self.all_topics:
-                    rospy.logwarn("warning: topic %s not found" % topic_name)
-                    continue
-
-                # if the local subscriber doesn't exist for the remote sub, create it
-                if topic_name not in self.local_subs:
-                    topic_type = self.all_topics[topic_name]
-                    msg_class = self.get_msg_class(topic_type)
-
-                    if msg_class is None:
-                        # invalid message type or custom message package not source-bashed
-                        # put a dummy subscriber in to avoid returning to this again.
-                        # user needs to re-run rosboard with the custom message files sourced.
-                        self.local_subs[topic_name] = DummySubscriber()
-                        self.event_loop.add_callback(
-                            ROSBoardSocketHandler.broadcast,
-                            [
-                                ROSBoardSocketHandler.MSG_MSG,
-                                {
-                                    "_topic_name": topic_name, # special non-ros topics start with _
-                                    "_topic_type": topic_type,
-                                    "_error": "Could not load message type '%s'. Are the .msg files for it source-bashed?" % topic_type,
-                                },
-                            ]
-                        )
-                        continue
-
-                    self.last_data_times_by_topic[topic_name] = 0.0
-
-                    rospy.loginfo("Subscribing to %s" % topic_name)
-
-                    kwargs = {}
-                    if rospy.__name__ == "rospy2":
-                        # In ros2 we also can pass QoS parameters to the subscriber.
-                        # To avoid incompatibilities we subscribe using the same Qos
-                        # of the topic's publishers
-                        kwargs = {"qos": self.get_topic_qos(topic_name)}
-                    self.local_subs[topic_name] = rospy.Subscriber(
-                        topic_name,
-                        self.get_msg_class(topic_type),
-                        self.on_ros_msg,
-                        callback_args = (topic_name, topic_type),
-                        **kwargs
-                    )
-
-            # clean up local subscribers for which remote clients have lost interest
-            for topic_name in list(self.local_subs.keys()):
-                if topic_name not in self.remote_subs or \
-                    len(self.remote_subs[topic_name]) == 0:
-                        rospy.loginfo("Unsubscribing from %s" % topic_name)
-                        self.local_subs[topic_name].unregister()
-                        del(self.local_subs[topic_name])
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-        self.lock.release()
 
     def on_system_stats(self, system_stats):
         """

@@ -69,7 +69,8 @@ class ImageViewer extends Viewer {
   }
 
   decodeAndRenderUncompressed(msg) {
-    this.error("Support for uncompressed images not yet implemented.");
+    // this.error("Support for uncompressed images not yet implemented.");
+    this.lastMsg = msg;
   }
 }
 
