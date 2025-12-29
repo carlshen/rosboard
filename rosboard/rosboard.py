@@ -469,7 +469,8 @@ class ROSBoardNode(object):
                         saveDevice.device_name = device.get("device_name")
                         saveDevice.device_type = device.get("device_type")
                         saveDevice.device_ip = device.get("device_ip")
-                        saveDevice.camera_ip = device.get("camera_ip")
+                        saveDevice.mesh_ip = device.get("mesh_ip")
+                        saveDevice.lidar_ip = device.get("lidar_ip")
                         saveDevice.device_status = 0
                         saveDevice.creator = "ros"
                         saveDevice.updater = "ros"
@@ -485,9 +486,9 @@ class ROSBoardNode(object):
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
                     {
-                        "code": -1,
+                        "code": 0,
                         "_topic_name": topic_name,
-                        "message": "device save failed",
+                        "message": "device save no data",
                     }]
                     if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                         sock.write_message(json.dumps(json_err))
@@ -510,9 +511,9 @@ class ROSBoardNode(object):
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
                     {
-                        "code": -1,
+                        "code": 0,
                         "_topic_name": topic_name,
-                        "message": "device delete failed",
+                        "message": "device delete no data",
                     }]
                     if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                         sock.write_message(json.dumps(json_err))
@@ -526,14 +527,16 @@ class ROSBoardNode(object):
                             saveDevice.device_name = device.get("device_name")
                             saveDevice.device_type = device.get("device_type")
                             saveDevice.device_ip = device.get("device_ip")
-                            saveDevice.camera_ip = device.get("camera_ip")
+                            saveDevice.mesh_ip = device.get("mesh_ip")
+                            saveDevice.lidar_ip = device.get("lidar_ip")
                             saveDevice.save()
                         else:
                             saveDevice = DeviceList.create()
                             saveDevice.device_name = device.get("device_name")
                             saveDevice.device_type = device.get("device_type")
                             saveDevice.device_ip = device.get("device_ip")
-                            saveDevice.camera_ip = device.get("camera_ip")
+                            saveDevice.mesh_ip = device.get("mesh_ip")
+                            saveDevice.lidar_ip = device.get("lidar_ip")
                             saveDevice.device_status = 0
                             saveDevice.creator = "ros"
                             saveDevice.updater = "ros"
@@ -549,9 +552,9 @@ class ROSBoardNode(object):
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
                     {
-                        "code": -1,
+                        "code": 0,
                         "_topic_name": topic_name,
-                        "message": "device update failed",
+                        "message": "device update no data",
                     }]
                     if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                         sock.write_message(json.dumps(json_err))
@@ -567,7 +570,8 @@ class ROSBoardNode(object):
                         jDevice["device_name"] = device["device_name"]
                         jDevice["device_ip"] = device["device_ip"]
                         jDevice["device_type"] = device["device_type"]
-                        jDevice["camera_ip"] = device["camera_ip"]
+                        jDevice["mesh_ip"] = device["mesh_ip"]
+                        jDevice["lidar_ip"] = device["lidar_ip"]
                         json_list.append(jDevice)
                 json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
                     {
@@ -622,6 +626,134 @@ class ROSBoardNode(object):
                     ROSBoardSocketHandler.MSG_VIDEO,
                     msg]
                 print("message: video_data not support: %s" % json_err)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_pcd(self, sock: socket, msg: json):
+        # save pcd data to server
+        if msg is None or sock is None:
+            print("sync_pcd msg is None.")
+            return
+        try:
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "query":
+                pModels = InfraFile.select().where(InfraFile.type=="pcd")
+                pDicts = [model_to_dict(pm) for pm in pModels]
+                json_list = []
+                if pDicts is not None and len(pDicts) > 0:
+                    print("query_pcd: size: %s" % len(pDicts))
+                    for pd in pDicts:
+                        jpd = {}
+                        jpd["id"] = pd["id"]
+                        jpd["name"] = pd["name"]
+                        jpd["path"] = pd["path"]
+                        jpd["type"] = pd["type"]
+                        json_list.append(jpd)
+                json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "_pcd_list": json_list,
+                        "message": "pcd query successfully",
+                    }]
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            elif topic_name == "del":
+                pModels = msg.get("_pcd_list", None)
+                if pModels is not None and len(pModels) > 0:
+                    print("delete_pcd: size: %s" % len(pModels))
+                    for pd in pModels:
+                        delP = InfraFile.get_by_id(pd.get("id"))
+                        if delP is not None:
+                            delP.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "message": "pcd delete successfully",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_ok))
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "message": "pcd delete no data",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_err))
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": -1,
+                        "message": "pcd not found.",
+                    }]
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_pgm(self, sock: socket, msg: json):
+        # save pgm data to server
+        if msg is None or sock is None:
+            print("sync_pgm msg is None.")
+            return
+        try:
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "query":
+                pModels = InfraFile.select().where(InfraFile.type=="pgm")
+                pDicts = [model_to_dict(pm) for pm in pModels]
+                json_list = []
+                if pDicts is not None and len(pDicts) > 0:
+                    print("query_pgm: size: %s" % len(pDicts))
+                    for pd in pDicts:
+                        jpd = {}
+                        jpd["id"] = pd["id"]
+                        jpd["name"] = pd["name"]
+                        jpd["path"] = pd["path"]
+                        jpd["type"] = pd["type"]
+                        json_list.append(jpd)
+                json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "_pgm_list": json_list,
+                        "message": "pgm query successfully",
+                    }]
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            elif topic_name == "del":
+                pModels = msg.get("_pgm_list", None)
+                if pModels is not None and len(pModels) > 0:
+                    print("delete_pgm: size: %s" % len(pModels))
+                    for pd in pModels:
+                        delP = InfraFile.get_by_id(pd.get("id"))
+                        if delP is not None:
+                            delP.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "message": "pgm delete successfully",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_ok))
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "message": "pgm delete no data",
+                    }]
+                    if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                        sock.write_message(json.dumps(json_err))
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": -1,
+                        "message": "pgm not found.",
+                    }]
                 if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                     sock.write_message(json.dumps(json_err))
 
