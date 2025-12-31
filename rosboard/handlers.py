@@ -131,8 +131,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                         socket.write_message(json_msg)
                     else:
                         print("callback result message error for socket is closed.")
-                else:
-                    print("callback result message for other sid %s", sid)
         except Exception as e:
             print("Error callback message: %s" % str(e))
             traceback.print_exc()
@@ -239,7 +237,10 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             # print("message: device: %s" % message)
             device_data = argv[1]
             if device_data is not None:
-                self.node.sync_device(self, device_data)
+                device_data["_msg"] = ROSBoardSocketHandler.MSG_DEVICE
+                device_data["_sid"] = self.id
+                self.node.message_queue.put(device_data)
+                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
             else:
                 device_data["code"] = -100
                 json_err = [
@@ -278,7 +279,10 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
             elif point_cloud_data.get("_topic_name") == "query" or point_cloud_data.get("_topic_name") == "del":
-                self.node.sync_pcd(self, point_cloud_data)
+                point_cloud_data["_msg"] = ROSBoardSocketHandler.MSG_PCD
+                point_cloud_data["_sid"] = self.id
+                self.node.message_queue.put(point_cloud_data)
+                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
             else:
                 # print("message: point_cloud_data len: %s" % len(json.dumps(point_cloud_data)))
                 file_path = self.node.generate_filename()
@@ -303,7 +307,10 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
             elif point_cloud_map.get("_topic_name") == "query" or point_cloud_map.get("_topic_name") == "del":
-                self.node.sync_pgm(self, point_cloud_map)
+                point_cloud_map["_msg"] = ROSBoardSocketHandler.MSG_PGM
+                point_cloud_map["_sid"] = self.id
+                self.node.message_queue.put(point_cloud_map)
+                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
             else:
                 # print("message: point_cloud_map len: %s" % len(json.dumps(point_cloud_map)))
                 file_path = self.node.map_filename()
