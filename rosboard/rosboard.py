@@ -2,8 +2,6 @@
 
 import json
 import yaml
-import peewee
-import peewee_async
 from typing import Any, Optional
 from pypcd4 import Encoding, MetaData, PointCloud
 import redis
@@ -16,7 +14,7 @@ import os
 import socket
 import threading
 import time
-import tornado, tornado.web, tornado.websocket
+import tornado, tornado.web
 import traceback
 from playhouse.shortcuts import model_to_dict
 import requests
@@ -347,6 +345,7 @@ class ROSBoardNode(object):
         msg.pop("_topic_name", None)
         msg.pop("_topic_type", None)
         msg.pop("_time", None)
+        sid = msg.pop("_sid", None)
         file_path = msg.pop("_file_path", None)
         if file_path is None:
             print("process_message file_path is None, need generate.")
@@ -367,8 +366,23 @@ class ROSBoardNode(object):
             saveFile.updater = "ros"
             saveFile.deleted = 0
             saveFile.save()
+            json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": 0,
+                    "message": "Point cloud data saved successfully",
+                    "file_path": file_path.__str__(),
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         else:
             print("process_message: save file error: %s" % file_path)
+            json_err = [
+                ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": -1,
+                    "message": "point cloud data save error",
+                    "file_path": "",
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
     def sync_message(self, sock):
         # sync cached message to socket client
@@ -909,6 +923,7 @@ class ROSBoardNode(object):
         msg.pop("_topic_name", None)
         msg.pop("_topic_type", None)
         msg.pop("_time", None)
+        sid = msg.pop("_sid", None)
         base = msg.pop("_file_path", None)
         if base is None:
             print("save_map file_path is None, need generate.")
@@ -948,6 +963,23 @@ class ROSBoardNode(object):
             saveFile.save()
         else:
             print("save_map: save yaml_path error: %s" % yaml_path)
+        if os.path.exists(pgm_path) and os.path.exists(yaml_path):
+            json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": 0,
+                    "message": "Point cloud map saved successfully",
+                    "file_path": base.__str__(),
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        else:
+            json_err = [
+                ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": -1,
+                    "message": "point cloud map saved error",
+                    "file_path": "",
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
     def save_pgm(self, msg: OccupancyGrid, path: str):
         width, height = msg.info.width, msg.info.height

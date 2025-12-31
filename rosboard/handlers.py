@@ -115,6 +115,28 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             print("Error sending message: %s" % str(e))
             traceback.print_exc()
 
+    @classmethod
+    def callback(cls, message, sid):
+        """
+        callback a ROS message (message) to the socket that call the request.
+        The dict message should contain metadata about the result processed.
+        """
+
+        try:
+            json_msg = json.dumps(message, separators=(',', ':'))
+            print("callback result message: %s" % json_msg)
+            for socket in cls.sockets:
+                if socket and socket.id == sid:
+                    if socket.ws_connection and not socket.ws_connection.is_closing():
+                        socket.write_message(json_msg)
+                    else:
+                        print("callback result message error for socket is closed.")
+                else:
+                    print("callback result message for other sid %s", sid)
+        except Exception as e:
+            print("Error callback message: %s" % str(e))
+            traceback.print_exc()
+
     def on_message(self, message):
         """
         Message received from the client.
@@ -262,17 +284,9 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 file_path = self.node.generate_filename()
                 point_cloud_data["_file_path"] = file_path
                 # print("message: point_cloud_data file_path: %s" % file_path)
+                point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
                 print("message_queue: qsize: %s" % self.node.message_queue.qsize())
-                json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                    {
-                        "code": 0,
-                        "message": "Point cloud data saved successfully",
-                        "file_path": file_path.__str__(),
-                    }]
-                print("message: save point_cloud_data: %s" % json_ok)
-                if self and self.ws_connection and not self.ws_connection.is_closing():
-                    self.write_message(json.dumps(json_ok))
         elif argv[0] == ROSBoardSocketHandler.MSG_PGM:
             # save to file and insert into DB
             # print("message: file: %s" % message)
@@ -295,17 +309,9 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 file_path = self.node.map_filename()
                 point_cloud_map["_file_path"] = file_path
                 # print("message: point_cloud_map file_path: %s" % file_path)
+                point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
                 print("message_queue: qsize: %s" % self.node.message_queue.qsize())
-                json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                    {
-                        "code": 0,
-                        "message": "Point cloud map saved successfully",
-                        "file_path": file_path.__str__(),
-                    }]
-                print("message: save point_cloud_map: %s" % json_ok)
-                if self and self.ws_connection and not self.ws_connection.is_closing():
-                    self.write_message(json.dumps(json_ok))
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
