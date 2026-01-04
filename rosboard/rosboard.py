@@ -17,7 +17,7 @@ import time
 import tornado, tornado.web
 import traceback
 from playhouse.shortcuts import model_to_dict
-import requests
+from ping3 import ping
 
 if os.environ.get("ROS_VERSION") == "1":
     import rospy # ROS1
@@ -191,9 +191,31 @@ class ROSBoardNode(object):
                 continue
             try:
                 self.event_loop.add_callback(ROSBoardSocketHandler.send_pings)
+                self.sync_status()
             except Exception as e:
                 rospy.logwarn(str(e))
                 traceback.print_exc()
+
+    def sync_status(self):
+        """
+        Periodically calls self.sync_status() for device status.
+        """
+        device_list = DeviceList.select()
+        if device_list is not None and len(device_list) > 0:
+            # print("sync_status: size: %s" % len(device_list))
+            for device in device_list:
+                host = device.device_ip
+                latency = ping(host, timeout=1)
+                print("sync_status: host: %s, latency: %s" % (host, latency))
+                if latency is None:
+                    device.device_delay = "--ms"
+                    device.device_status = 0
+                else:
+                    device.device_delay = str(int(latency * 1000)) + "ms"
+                    device.device_status = 1
+                device.save()
+        else:
+            print("sync_status: no device data.")
 
     def sync_subs_loop(self):
         """
@@ -337,6 +359,14 @@ class ROSBoardNode(object):
                     self.save_map(message)
                 else:
                     print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
+                    sid = message.pop("_sid", None)
+                    json_err = [msg,
+                        {
+                        "code": -1,
+                        "_topic_name": message.get("_topic_name", ""),
+                        "message": "topic_name not found.",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
                 # 标记任务完成
                 self.message_queue.task_done()
@@ -406,8 +436,6 @@ class ROSBoardNode(object):
             traceback.print_exc()
 
     def sync_topics(self, sock):
-        # Acquire lock since either sync_subs_loop or websocket may call this function (from different threads)
-        self.lock.acquire()
         try:
             # all topics and their types as strings e.g. {"/foo": "std_msgs/String", "/bar": "std_msgs/Int32"}
             self.all_topics = {}
@@ -423,11 +451,12 @@ class ROSBoardNode(object):
                 json_msg = json.dumps([ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ], separators=(',', ':'))
                 print("sync_topics message: %s" % json_msg)
                 sock.write_message(json_msg)
+            else:
+                print("sync_topics socket is closed.")
 
         except Exception as e:
             rospy.logwarn(str(e))
             traceback.print_exc()
-        self.lock.release()
 
     def sync_tasks(self, sock: socket, msg: json):
         # send task data to ros
@@ -575,19 +604,20 @@ class ROSBoardNode(object):
                     }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             elif topic_name == "query":
-                devices = DeviceList.select()
-                device_list = [model_to_dict(device) for device in devices]
+                device_list = DeviceList.select()
                 json_list = []
                 if device_list is not None and len(device_list) > 0:
                     print("query_device: size: %s" % len(device_list))
                     for device in device_list:
                         jDevice = {}
-                        jDevice["id"] = device["id"]
-                        jDevice["device_name"] = device["device_name"]
-                        jDevice["device_ip"] = device["device_ip"]
-                        jDevice["device_type"] = device["device_type"]
-                        jDevice["mesh_ip"] = device["mesh_ip"]
-                        jDevice["lidar_ip"] = device["lidar_ip"]
+                        jDevice["id"] = device.id
+                        jDevice["device_name"] = device.device_name
+                        jDevice["device_ip"] = device.device_ip
+                        jDevice["device_type"] = device.device_type
+                        jDevice["mesh_ip"] = device.mesh_ip
+                        jDevice["lidar_ip"] = device.lidar_ip
+                        jDevice["device_delay"] = device.device_delay
+                        jDevice["device_status"] = device.device_status
                         json_list.append(jDevice)
                 json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
                     {

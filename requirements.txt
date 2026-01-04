@@ -8,3 +8,4 @@ open3d>=0.13.0  # 用于PLY文件处理（可选，如果不安装则使用手�
 aiomysql==0.1.0
 peewee==3.14.10
 peewee-async==0.7.0
+ping3
