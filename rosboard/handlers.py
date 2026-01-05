@@ -321,6 +321,25 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
                 print("message_queue: qsize: %s" % self.node.message_queue.qsize())
+        elif argv[0] == ROSBoardSocketHandler.MSG_LOG:
+            # query DB for the log
+            log_msg = argv[1]
+            # print("log_msg: %s" % log_msg)
+            if (log_msg is None) or (log_msg.get("_topic_name") is None):
+                json_err = [
+                    ROSBoardSocketHandler.MSG_LOG,
+                    {
+                        "code": -100,
+                        "message": "message data format error"
+                    }]
+                print("message: log_msg: %s" % json_err)
+                if self and self.ws_connection and not self.ws_connection.is_closing():
+                    self.write_message(json.dumps(json_err))
+            else:
+                log_msg["_msg"] = ROSBoardSocketHandler.MSG_LOG
+                log_msg["_sid"] = self.id
+                self.node.ros_queue.put(log_msg)
+                print("ros_queue: qsize: %s" % self.node.ros_queue.qsize())
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";

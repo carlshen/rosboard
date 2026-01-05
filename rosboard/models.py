@@ -55,11 +55,24 @@ class DeviceList(BaseModel):
     mesh_ip = peewee.TextField(default='', verbose_name='mesh_ip', help_text='自组网IP')
     lidar_ip = peewee.TextField(default='', verbose_name='lidar_ip', help_text='激光雷达IP')
     device_delay = peewee.TextField(default='', verbose_name='device_delay', help_text='设备延迟')
-    device_status = peewee.TextField(default=0, verbose_name='device_status', help_text='设备状态')
+    device_status = peewee.IntegerField(default=0, verbose_name='device_status', help_text='设备状态')
     device_desc = peewee.TextField(default='', verbose_name='device_desc', help_text='设备描述')
     creator = peewee.TextField(default='', verbose_name='creator', help_text='创建者')
     updater = peewee.TextField(default='', verbose_name='updater', help_text='更新者')
 
     class Meta:
         db_table = "device_list"
+
+
+# 日志
+class DeviceLog(BaseModel):
+    device = peewee.TextField(default='', verbose_name='device', help_text='设备名称')
+    title = peewee.TextField(default='', verbose_name='title', help_text='标题')
+    type = peewee.IntegerField(default=0, verbose_name='type', help_text='类型')
+    log = peewee.TextField(default='', verbose_name='log', help_text='日志')
+    creator = peewee.TextField(default='', verbose_name='creator', help_text='创建者')
+    updater = peewee.TextField(default='', verbose_name='updater', help_text='更新者')
+
+    class Meta:
+        db_table = "device_log"
 

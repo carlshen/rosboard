@@ -39,16 +39,16 @@ from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE
-from rosboard.models import InfraFile, DeviceList
+from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 
 class ROSBoardNode(object):
     instance = None
-    def __init__(self, node_name = "rosboard_rosnode"):
+    def __init__(self, node_name = "rosboard_node"):
         self.__class__.instance = self
         rospy.init_node(node_name)
         self.port = rospy.get_param("~port", 8888)
@@ -121,6 +121,9 @@ class ROSBoardNode(object):
         self.message_num = 0
         # loop to keep track of message for save pcd file
         threading.Thread(target = self.savefile_loop, daemon = True).start()
+        self.ros_queue = queue.Queue(maxsize=10)
+        # loop to keep track of message for ros log
+        threading.Thread(target = self.saveros_loop, daemon = True).start()
 
         self.lock = threading.Lock()
 
@@ -776,15 +779,15 @@ class ROSBoardNode(object):
                     for pd in pModels:
                         delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
                         if delP is not None:
-                            yaml = delP.path.replace(".pgm", ".yaml")
-                            if os.path.isfile(yaml):
-                                os.remove(yaml)
-                            dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
-                            if dYaml is not None:
-                                dYaml.delete_instance()
                             if os.path.isfile(delP.path):
                                 os.remove(delP.path)
                             delP.delete_instance()
+                        yaml = delP.path.replace(".pgm", ".yaml")
+                        dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
+                        if dYaml is not None:
+                            if os.path.isfile(yaml):
+                                os.remove(yaml)
+                            dYaml.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
                     {
                         "code": 0,
@@ -914,6 +917,11 @@ class ROSBoardNode(object):
             #     file_path = self.map_filename()
             #     ros_msg_dict["_file_path"] = file_path
             #     self.message_queue.put(ros_msg_dict)
+        elif topic_name == "/show_info":
+            # store it to the db for the log
+            # print("log ros_msg_dict: %s" % json.dumps(ros_msg_dict))
+            self.ros_queue.put(ros_msg_dict)
+            print("ros_queue: qsize: %s" % self.ros_queue.qsize())
 
     def cache_json(self, key: str, data: Any, expire_seconds: Optional[int] = None) -> None:
         """将任意可 JSON 序列化的数据写入 Redis 指定 key，可选过期时间（秒）"""
@@ -1053,6 +1061,119 @@ class ROSBoardNode(object):
         }
         with open(yaml_path, "w") as f:
             yaml.dump(data, f)
+
+    def saveros_loop(self):
+        """
+        Periodically calls save log for queue. Intended to be run in a thread.
+        """
+        while True:
+            try:
+                # 从队列获取消息（阻塞等待，直到有消息或超时）
+                message = self.ros_queue.get()
+
+                # 处理消息
+                if message is None:
+                    continue
+                msg = message.pop("_msg", None)
+                if msg == ROSBoardSocketHandler.MSG_LOG:
+                    self.sync_log(message)
+                elif message.get("_topic_name") == "/show_info":
+                    self.save_log(message)
+                else:
+                    print("saveros_loop topic is not processed: %s" % message.get("_topic_name"))
+
+                # 标记任务完成
+                self.ros_queue.task_done()
+
+            except Exception as e:
+                rospy.logwarn(str(e))
+                traceback.print_exc()
+
+    def sync_log(self, msg: json):
+        # sync log data to client
+        if msg is None:
+            print("sync_log msg is None.")
+            return
+        try:
+            sid = msg.pop("_sid", None)
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "query":
+                pModels = DeviceLog.select()
+                pDicts = [model_to_dict(pm) for pm in pModels]
+                json_list = []
+                if pDicts is not None and len(pDicts) > 0:
+                    print("query_log: size: %s" % len(pDicts))
+                    for pd in pDicts:
+                        js = {}
+                        js["id"] = pd["id"]
+                        js["device"] = pd["device"]
+                        js["type"] = pd["type"]
+                        js["log"] = pd["log"]
+                        js["time"] = pd["create_time"]
+                        json_list.append(js)
+                json_ok = [ROSBoardSocketHandler.MSG_LOG,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "_log_list": json_list,
+                        "message": "log query successfully",
+                    }]
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+            elif topic_name == "del":
+                pModels = msg.get("_log_list", None)
+                if pModels is not None and len(pModels) > 0:
+                    print("delete_log: size: %s" % len(pModels))
+                    for pd in pModels:
+                        delP = DeviceLog.get_or_none(DeviceLog.id == pd.get("id"))
+                        if delP is not None:
+                            delP.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_LOG,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "log delete successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_LOG,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "log delete no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_LOG,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "log not found.",
+                    }]
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def save_log(self, msg):
+        if (msg is None) or (msg.get("data") is None):
+            print("save_log msg is None.")
+            return
+        data = json.loads(msg.get("data"))
+        if data.get("device") is None:
+            print("save_log device is None.")
+            return
+        saveLog = DeviceLog.create()
+        saveLog.device = data.get("device")
+        saveLog.type = data.get("type")
+        saveLog.log = data.get("log")
+        saveLog.create_time = data.get("time")
+        saveLog.update_time = data.get("time")
+        saveLog.creator = "ros"
+        saveLog.updater = "ros"
+        saveLog.save()
+        print("save_log: save to db ok")
+
 
 def main(args=None):
     ROSBoardNode().start()
