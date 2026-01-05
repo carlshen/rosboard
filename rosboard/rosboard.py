@@ -546,7 +546,7 @@ class ROSBoardNode(object):
                 if device_list is not None and len(device_list) > 0:
                     print("delete_device: size: %s" % len(device_list))
                     for device in device_list:
-                        delDevice = DeviceList.get_by_id(device.get("id"))
+                        delDevice = DeviceList.get_or_none(DeviceList.id == device.get("id"))
                         if delDevice is not None:
                             delDevice.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
@@ -710,8 +710,10 @@ class ROSBoardNode(object):
                 if pModels is not None and len(pModels) > 0:
                     print("delete_pcd: size: %s" % len(pModels))
                     for pd in pModels:
-                        delP = InfraFile.get_by_id(pd.get("id"))
+                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
                         if delP is not None:
+                            if os.path.isfile(delP.path):
+                                os.remove(delP.path)
                             delP.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PCD,
                     {
@@ -756,7 +758,8 @@ class ROSBoardNode(object):
                         jpd = {}
                         jpd["id"] = pd["id"]
                         jpd["name"] = pd["name"]
-                        jpd["path"] = pd["path"]
+                        jpd["pgm_path"] = pd["path"]
+                        jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
                         jpd["type"] = pd["type"]
                         json_list.append(jpd)
                 json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -771,8 +774,16 @@ class ROSBoardNode(object):
                 if pModels is not None and len(pModels) > 0:
                     print("delete_pgm: size: %s" % len(pModels))
                     for pd in pModels:
-                        delP = InfraFile.get_by_id(pd.get("id"))
+                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
                         if delP is not None:
+                            yaml = delP.path.replace(".pgm", ".yaml")
+                            if os.path.isfile(yaml):
+                                os.remove(yaml)
+                            dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
+                            if dYaml is not None:
+                                dYaml.delete_instance()
+                            if os.path.isfile(delP.path):
+                                os.remove(delP.path)
                             delP.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
                     {
@@ -963,7 +974,7 @@ class ROSBoardNode(object):
             print("save_map: save pgm_path ok, save to db: %s" % pgm_path)
             saveFile = InfraFile.create()
             saveFile.name = Path(pgm_path).name
-            saveFile.path = str(Path(pgm_path).resolve())
+            saveFile.path = pgm_path
             saveFile.url = ""
             saveFile.type = "pgm"
             saveFile.size = os.path.getsize(pgm_path)
@@ -977,7 +988,7 @@ class ROSBoardNode(object):
             print("save_map: save yaml_path ok, save to db: %s" % yaml_path)
             saveFile = InfraFile.create()
             saveFile.name = Path(yaml_path).name
-            saveFile.path = str(Path(yaml_path).resolve())
+            saveFile.path = yaml_path
             saveFile.url = ""
             saveFile.type = "yaml"
             saveFile.size = os.path.getsize(yaml_path)
@@ -992,7 +1003,16 @@ class ROSBoardNode(object):
                 {
                     "code": 0,
                     "message": "Point cloud map saved successfully",
-                    "file_path": base.__str__(),
+                    "pgm_path": pgm_path,
+                    "yaml_path": yaml_path,
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        elif os.path.exists(pgm_path):
+            json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": 0,
+                    "message": "Point cloud map saved successfully",
+                    "pgm_path": pgm_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         else:

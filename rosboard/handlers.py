@@ -46,7 +46,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
 
         ROSBoardSocketHandler.sockets.add(self)
 
-        self.node.sync_topics(self)
+        # self.node.sync_topics(self)
         self.write_message(json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
             "hostname": self.node.title,
             "version": __version__,
@@ -60,6 +60,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         for topic_name in self.node.remote_subs:
             if self.id in self.node.remote_subs[topic_name]:
                 self.node.remote_subs[topic_name].remove(self.id)
+        print("warn: on_close socket is closed.")
 
     @classmethod
     def send_pings(cls):
@@ -141,6 +142,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         """
 
         if self.ws_connection.is_closing():
+            print("warn: on_message connection is closing.")
             return
 
         # JSON decode it, give up if it isn't valid JSON
