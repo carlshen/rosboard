@@ -520,9 +520,6 @@ class ROSBoardNode(object):
             if (self.message_num < 1):
                 self.message_num += 1
                 print("cache_json message num: %s" % self.message_num)
-            #     file_path = self.map_filename()
-            #     ros_msg_dict["_file_path"] = file_path
-            #     self.message_queue.put(ros_msg_dict)
         elif topic_name == "/show_info":
             # store it to the db for the log
             # print("log ros_msg_dict: %s" % json.dumps(ros_msg_dict))
@@ -626,7 +623,7 @@ class ROSBoardNode(object):
             print("process_message: save file ok, save to db: %s" % file_path)
             saveFile = InfraFile.create()
             saveFile.name = Path(file_path).name
-            saveFile.path = str(Path(file_path).resolve())
+            saveFile.path = file_path
             saveFile.url = ""
             saveFile.type = "pcd"
             saveFile.size = os.path.getsize(file_path)
@@ -638,7 +635,7 @@ class ROSBoardNode(object):
                 {
                     "code": 0,
                     "message": "Point cloud data saved successfully",
-                    "file_path": file_path.__str__(),
+                    "path": file_path.__str__(),
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         else:
@@ -648,7 +645,7 @@ class ROSBoardNode(object):
                 {
                     "code": -1,
                     "message": "point cloud data save error",
-                    "file_path": "",
+                    "path": "",
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
@@ -676,19 +673,19 @@ class ROSBoardNode(object):
                         saveDevice.updater = "ros"
                         saveDevice.save()
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device save successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device save no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             elif topic_name == "del":
                 device_list = msg.get("_device_list", None)
@@ -699,19 +696,19 @@ class ROSBoardNode(object):
                         if delDevice is not None:
                             delDevice.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device delete successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device delete no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             elif topic_name == "update":
                 device_list = msg.get("_device_list", None)
@@ -738,19 +735,19 @@ class ROSBoardNode(object):
                             saveDevice.updater = "ros"
                             saveDevice.save()
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device update successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device update no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             elif topic_name == "query":
                 topic_type = msg.get("_topic_type", None)
@@ -892,16 +889,13 @@ class ROSBoardNode(object):
                 if topic_type == "one":
                     pm = InfraFile.get_or_none(InfraFile.id == msg.get("id"))
                     json_list = []
-                    if pm is not None:
-                        pd = model_to_dict(pm)
-                        if pd["type"] == "pcd":
-                            jpd = {}
-                            jpd["id"] = pd["id"]
-                            jpd["name"] = pd["name"]
-                            jpd["pgm_path"] = pd["path"]
-                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
-                            jpd["type"] = pd["type"]
-                            json_list.append(jpd)
+                    if pm is not None and pm.type == "pcd":
+                        jpd = {}
+                        jpd["id"] = pm.id
+                        jpd["name"] = pm.name
+                        jpd["path"] = pm.path
+                        jpd["type"] = pm.type
+                        json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PCD,
                         {
                             "code": 0,
@@ -968,17 +962,17 @@ class ROSBoardNode(object):
                                 os.remove(delP.path)
                             delP.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                    {
+                        {
                         "code": 0,
                         "message": "pcd delete successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_PCD,
-                    {
+                        {
                         "code": 0,
                         "message": "pcd delete no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_PCD,
@@ -1005,16 +999,14 @@ class ROSBoardNode(object):
                 if topic_type == "one":
                     pm = InfraFile.get_or_none(InfraFile.id == msg.get("id"))
                     json_list = []
-                    if pm is not None:
-                        pd = model_to_dict(pm)
-                        if pd["type"] == "pgm":
-                            jpd = {}
-                            jpd["id"] = pd["id"]
-                            jpd["name"] = pd["name"]
-                            jpd["pgm_path"] = pd["path"]
-                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
-                            jpd["type"] = pd["type"]
-                            json_list.append(jpd)
+                    if pm is not None and pm.type == "pgm":
+                        jpd = {}
+                        jpd["id"] = pm.id
+                        jpd["name"] = pm.name
+                        jpd["path"] = pm.path
+                        jpd["yaml_path"] = pm.path.replace(".pgm", ".yaml")
+                        jpd["type"] = pm.type
+                        json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
                         {
                             "code": 0,
@@ -1036,7 +1028,7 @@ class ROSBoardNode(object):
                             jpd = {}
                             jpd["id"] = pd["id"]
                             jpd["name"] = pd["name"]
-                            jpd["pgm_path"] = pd["path"]
+                            jpd["path"] = pd["path"]
                             jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
@@ -1059,7 +1051,7 @@ class ROSBoardNode(object):
                             jpd = {}
                             jpd["id"] = pd["id"]
                             jpd["name"] = pd["name"]
-                            jpd["pgm_path"] = pd["path"]
+                            jpd["path"] = pd["path"]
                             jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
@@ -1089,19 +1081,19 @@ class ROSBoardNode(object):
                                 os.remove(yaml)
                             dYaml.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "pgm delete successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_PGM,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "pgm delete no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_PGM,
@@ -1167,7 +1159,7 @@ class ROSBoardNode(object):
                 {
                     "code": 0,
                     "message": "Point cloud map saved successfully",
-                    "pgm_path": pgm_path,
+                    "path": pgm_path,
                     "yaml_path": yaml_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
@@ -1176,7 +1168,7 @@ class ROSBoardNode(object):
                 {
                     "code": 0,
                     "message": "Point cloud map saved successfully",
-                    "pgm_path": pgm_path,
+                    "path": pgm_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         else:
@@ -1185,7 +1177,7 @@ class ROSBoardNode(object):
                 {
                     "code": -1,
                     "message": "point cloud map saved error",
-                    "file_path": "",
+                    "path": "",
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
@@ -1334,19 +1326,19 @@ class ROSBoardNode(object):
                         if delP is not None:
                             delP.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_LOG,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "log delete successfully",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_LOG,
-                    {
+                        {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "log delete no data",
-                    }]
+                        }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_LOG,
