@@ -337,93 +337,6 @@ class ROSBoardNode(object):
 
         self.lock.release()
 
-    def savefile_loop(self):
-        """
-        Periodically calls save file for queue. Intended to be run in a thread.
-        """
-        while True:
-            try:
-                # 从队列获取消息（阻塞等待，直到有消息或超时）
-                message = self.message_queue.get()
-
-                # 处理消息
-                if message is None:
-                    continue
-                msg = message.pop("_msg", None)
-                if msg == ROSBoardSocketHandler.MSG_PCD:
-                    self.sync_pcd(message)
-                elif msg == ROSBoardSocketHandler.MSG_PGM:
-                    self.sync_pgm(message)
-                elif msg == ROSBoardSocketHandler.MSG_DEVICE:
-                    self.sync_device(message)
-                elif message.get("_topic_name", "") == "/global_map":
-                    self.process_message(message)
-                elif message.get("_topic_name", "") == "/grid_map2D":
-                    self.save_map(message)
-                else:
-                    print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
-                    sid = message.pop("_sid", None)
-                    json_err = [msg,
-                        {
-                        "code": -1,
-                        "_topic_name": message.get("_topic_name", ""),
-                        "message": "topic_name not found.",
-                        }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
-                # 标记任务完成
-                self.message_queue.task_done()
-
-            except Exception as e:
-                print(f"[savefile_loop] exception: {e}")
-                traceback.print_exc()
-
-    def process_message(self, msg: json):
-        if msg is None:
-            print("process_message msg is None.")
-            return
-        msg.pop("_topic_name", None)
-        msg.pop("_topic_type", None)
-        msg.pop("_time", None)
-        sid = msg.pop("_sid", None)
-        file_path = msg.pop("_file_path", None)
-        if file_path is None:
-            print("process_message file_path is None, need generate.")
-            file_path = self.generate_filename()
-        ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
-        # transfer to PointCloud from ROS PointCloud2 message
-        pc = PointCloud.from_msg(ros_msg)
-        pc.save(file_path)
-        if file_path.is_file():
-            print("process_message: save file ok, save to db: %s" % file_path)
-            saveFile = InfraFile.create()
-            saveFile.name = Path(file_path).name
-            saveFile.path = str(Path(file_path).resolve())
-            saveFile.url = ""
-            saveFile.type = "pcd"
-            saveFile.size = os.path.getsize(file_path)
-            saveFile.creator = "ros"
-            saveFile.updater = "ros"
-            saveFile.deleted = 0
-            saveFile.save()
-            json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                {
-                    "code": 0,
-                    "message": "Point cloud data saved successfully",
-                    "file_path": file_path.__str__(),
-                }]
-            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-        else:
-            print("process_message: save file error: %s" % file_path)
-            json_err = [
-                ROSBoardSocketHandler.MSG_PCD,
-                {
-                    "code": -1,
-                    "message": "point cloud data save error",
-                    "file_path": "",
-                }]
-            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
     def sync_message(self, sock):
         # sync cached message to socket client
         try:
@@ -501,313 +414,6 @@ class ROSBoardNode(object):
                 print("sync_tasks task_data err: %s" % json_err)
                 if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                     sock.write_message(json.dumps(json_err))
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-    def sync_device(self, msg: json):
-        # save device data to server
-        if msg is None:
-            print("sync_device msg is None.")
-            return
-        try:
-            sid = msg.pop("_sid", None)
-            topic_name = msg.get("_topic_name", None)
-            if topic_name == "add":
-                device_list = msg.get("_device_list", None)
-                if device_list is not None and len(device_list) > 0:
-                    print("save_device: size: %s" % len(device_list))
-                    for device in device_list:
-                        saveDevice = DeviceList.create()
-                        saveDevice.device_name = device.get("device_name")
-                        saveDevice.device_type = device.get("device_type")
-                        saveDevice.device_ip = device.get("device_ip")
-                        saveDevice.mesh_ip = device.get("mesh_ip")
-                        saveDevice.lidar_ip = device.get("lidar_ip")
-                        saveDevice.device_status = 0
-                        saveDevice.creator = "ros"
-                        saveDevice.updater = "ros"
-                        saveDevice.save()
-                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device save successfully",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-                else:
-                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device save no data",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-            elif topic_name == "del":
-                device_list = msg.get("_device_list", None)
-                if device_list is not None and len(device_list) > 0:
-                    print("delete_device: size: %s" % len(device_list))
-                    for device in device_list:
-                        delDevice = DeviceList.get_or_none(DeviceList.id == device.get("id"))
-                        if delDevice is not None:
-                            delDevice.delete_instance()
-                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device delete successfully",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-                else:
-                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device delete no data",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-            elif topic_name == "update":
-                device_list = msg.get("_device_list", None)
-                if device_list is not None and len(device_list) > 0:
-                    print("update_device: size: %s" % len(device_list))
-                    for device in device_list:
-                        saveDevice = DeviceList.get_by_id(device.get("id"))
-                        if saveDevice is not None:
-                            saveDevice.device_name = device.get("device_name")
-                            saveDevice.device_type = device.get("device_type")
-                            saveDevice.device_ip = device.get("device_ip")
-                            saveDevice.mesh_ip = device.get("mesh_ip")
-                            saveDevice.lidar_ip = device.get("lidar_ip")
-                            saveDevice.save()
-                        else:
-                            saveDevice = DeviceList.create()
-                            saveDevice.device_name = device.get("device_name")
-                            saveDevice.device_type = device.get("device_type")
-                            saveDevice.device_ip = device.get("device_ip")
-                            saveDevice.mesh_ip = device.get("mesh_ip")
-                            saveDevice.lidar_ip = device.get("lidar_ip")
-                            saveDevice.device_status = 0
-                            saveDevice.creator = "ros"
-                            saveDevice.updater = "ros"
-                            saveDevice.save()
-                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device update successfully",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-                else:
-                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "message": "device update no data",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-            elif topic_name == "query":
-                device_list = DeviceList.select()
-                json_list = []
-                if device_list is not None and len(device_list) > 0:
-                    print("query_device: size: %s" % len(device_list))
-                    for device in device_list:
-                        jDevice = {}
-                        jDevice["id"] = device.id
-                        jDevice["device_name"] = device.device_name
-                        jDevice["device_ip"] = device.device_ip
-                        jDevice["device_type"] = device.device_type
-                        jDevice["mesh_ip"] = device.mesh_ip
-                        jDevice["lidar_ip"] = device.lidar_ip
-                        jDevice["device_delay"] = device.device_delay
-                        jDevice["device_status"] = device.device_status
-                        json_list.append(jDevice)
-                json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "_device_list": json_list,
-                        "message": "device query successfully",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-            else:
-                json_err = [ROSBoardSocketHandler.MSG_DEVICE,
-                    {
-                        "code": -1,
-                        "_topic_name": topic_name,
-                        "message": "topic_name not found.",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-    def sync_video(self, sock: socket, msg: json):
-        # send video data to Media server
-        if msg is None or sock is None:
-            print("sync_video msg is None.")
-            return
-        try:
-            topic_name = msg.get("_topic_name")
-            topic_type = msg.get("_topic_type")
-            if topic_name == "rtsp":
-                json_list = []
-                ip_list = msg.pop("_ip_list", None)
-                if ip_list is not None and len(ip_list) > 0:
-                    for ip in ip_list:
-                        url = "rtsp://%s:5554/live/push" % ip
-                        json_list.append(url)
-                msg["code"] = 0
-                msg["_url_list"] = json_list
-                json_ok = [
-                    ROSBoardSocketHandler.MSG_VIDEO,
-                    msg]
-                print("message: video_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
-            else:
-                msg["code"] = -1
-                msg["_url_list"] = []
-                json_err = [
-                    ROSBoardSocketHandler.MSG_VIDEO,
-                    msg]
-                print("message: video_data not support: %s" % json_err)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_err))
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-    def sync_pcd(self, msg: json):
-        # save pcd data to server
-        if msg is None:
-            print("sync_pcd msg is None.")
-            return
-        try:
-            sid = msg.pop("_sid", None)
-            topic_name = msg.get("_topic_name", None)
-            if topic_name == "query":
-                pModels = InfraFile.select().where(InfraFile.type=="pcd")
-                pDicts = [model_to_dict(pm) for pm in pModels]
-                json_list = []
-                if pDicts is not None and len(pDicts) > 0:
-                    print("query_pcd: size: %s" % len(pDicts))
-                    for pd in pDicts:
-                        jpd = {}
-                        jpd["id"] = pd["id"]
-                        jpd["name"] = pd["name"]
-                        jpd["path"] = pd["path"]
-                        jpd["type"] = pd["type"]
-                        json_list.append(jpd)
-                json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                    {
-                        "code": 0,
-                        "_pcd_list": json_list,
-                        "message": "pcd query successfully",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-            elif topic_name == "del":
-                pModels = msg.get("_pcd_list", None)
-                if pModels is not None and len(pModels) > 0:
-                    print("delete_pcd: size: %s" % len(pModels))
-                    for pd in pModels:
-                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
-                        if delP is not None:
-                            if os.path.isfile(delP.path):
-                                os.remove(delP.path)
-                            delP.delete_instance()
-                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                    {
-                        "code": 0,
-                        "message": "pcd delete successfully",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-                else:
-                    json_err = [ROSBoardSocketHandler.MSG_PCD,
-                    {
-                        "code": 0,
-                        "message": "pcd delete no data",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-            else:
-                json_err = [ROSBoardSocketHandler.MSG_PCD,
-                    {
-                        "code": -1,
-                        "message": "pcd not found.",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-    def sync_pgm(self, msg: json):
-        # save pgm data to server
-        if msg is None:
-            print("sync_pgm msg is None.")
-            return
-        try:
-            sid = msg.pop("_sid", None)
-            topic_name = msg.get("_topic_name", None)
-            if topic_name == "query":
-                pModels = InfraFile.select().where(InfraFile.type=="pgm")
-                pDicts = [model_to_dict(pm) for pm in pModels]
-                json_list = []
-                if pDicts is not None and len(pDicts) > 0:
-                    print("query_pgm: size: %s" % len(pDicts))
-                    for pd in pDicts:
-                        jpd = {}
-                        jpd["id"] = pd["id"]
-                        jpd["name"] = pd["name"]
-                        jpd["pgm_path"] = pd["path"]
-                        jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
-                        jpd["type"] = pd["type"]
-                        json_list.append(jpd)
-                json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                    {
-                        "code": 0,
-                        "_pgm_list": json_list,
-                        "message": "pgm query successfully",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-            elif topic_name == "del":
-                pModels = msg.get("_pgm_list", None)
-                if pModels is not None and len(pModels) > 0:
-                    print("delete_pgm: size: %s" % len(pModels))
-                    for pd in pModels:
-                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
-                        if delP is not None:
-                            if os.path.isfile(delP.path):
-                                os.remove(delP.path)
-                            delP.delete_instance()
-                        yaml = delP.path.replace(".pgm", ".yaml")
-                        dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
-                        if dYaml is not None:
-                            if os.path.isfile(yaml):
-                                os.remove(yaml)
-                            dYaml.delete_instance()
-                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                    {
-                        "code": 0,
-                        "message": "pgm delete successfully",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-                else:
-                    json_err = [ROSBoardSocketHandler.MSG_PGM,
-                    {
-                        "code": 0,
-                        "message": "pgm delete no data",
-                    }]
-                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-            else:
-                json_err = [ROSBoardSocketHandler.MSG_PGM,
-                    {
-                        "code": -1,
-                        "message": "pgm not found.",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
         except Exception as e:
             rospy.logwarn(str(e))
@@ -959,6 +565,556 @@ class ROSBoardNode(object):
         filename = f"point_{dt_str}_{mmm}"
         return self.DATA_DIR / filename
 
+    def savefile_loop(self):
+        """
+        Periodically calls save file for queue. Intended to be run in a thread.
+        """
+        while True:
+            try:
+                # 从队列获取消息（阻塞等待，直到有消息或超时）
+                message = self.message_queue.get()
+
+                # 处理消息
+                if message is None:
+                    continue
+                msg = message.pop("_msg", None)
+                if msg == ROSBoardSocketHandler.MSG_PCD:
+                    self.sync_pcd(message)
+                elif msg == ROSBoardSocketHandler.MSG_PGM:
+                    self.sync_pgm(message)
+                elif msg == ROSBoardSocketHandler.MSG_DEVICE:
+                    self.sync_device(message)
+                elif message.get("_topic_name", "") == "/global_map":
+                    self.process_message(message)
+                elif message.get("_topic_name", "") == "/grid_map2D":
+                    self.save_map(message)
+                else:
+                    print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
+                    sid = message.pop("_sid", None)
+                    json_err = [msg,
+                        {
+                        "code": -1,
+                        "_topic_name": message.get("_topic_name", ""),
+                        "message": "topic_name not found.",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+                # 标记任务完成
+                self.message_queue.task_done()
+
+            except Exception as e:
+                print(f"[savefile_loop] exception: {e}")
+                traceback.print_exc()
+
+    def process_message(self, msg: json):
+        if msg is None:
+            print("process_message msg is None.")
+            return
+        msg.pop("_topic_name", None)
+        msg.pop("_topic_type", None)
+        msg.pop("_time", None)
+        sid = msg.pop("_sid", None)
+        file_path = msg.pop("_file_path", None)
+        if file_path is None:
+            print("process_message file_path is None, need generate.")
+            file_path = self.generate_filename()
+        ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
+        # transfer to PointCloud from ROS PointCloud2 message
+        pc = PointCloud.from_msg(ros_msg)
+        pc.save(file_path)
+        if file_path.is_file():
+            print("process_message: save file ok, save to db: %s" % file_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(file_path).name
+            saveFile.path = str(Path(file_path).resolve())
+            saveFile.url = ""
+            saveFile.type = "pcd"
+            saveFile.size = os.path.getsize(file_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+            json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": 0,
+                    "message": "Point cloud data saved successfully",
+                    "file_path": file_path.__str__(),
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        else:
+            print("process_message: save file error: %s" % file_path)
+            json_err = [
+                ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": -1,
+                    "message": "point cloud data save error",
+                    "file_path": "",
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+    def sync_device(self, msg: json):
+        # save device data to server
+        if msg is None:
+            print("sync_device msg is None.")
+            return
+        try:
+            sid = msg.pop("_sid", None)
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "add":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("save_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        saveDevice = DeviceList.create()
+                        saveDevice.device_name = device.get("device_name")
+                        saveDevice.device_type = device.get("device_type")
+                        saveDevice.device_ip = device.get("device_ip")
+                        saveDevice.mesh_ip = device.get("mesh_ip")
+                        saveDevice.lidar_ip = device.get("lidar_ip")
+                        saveDevice.device_status = 0
+                        saveDevice.creator = "ros"
+                        saveDevice.updater = "ros"
+                        saveDevice.save()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device save successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device save no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_name == "del":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("delete_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        delDevice = DeviceList.get_or_none(DeviceList.id == device.get("id"))
+                        if delDevice is not None:
+                            delDevice.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device delete successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device delete no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_name == "update":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    print("update_device: size: %s" % len(device_list))
+                    for device in device_list:
+                        saveDevice = DeviceList.get_or_none(DeviceList.id == device.get("id"))
+                        if saveDevice is not None:
+                            saveDevice.device_name = device.get("device_name")
+                            saveDevice.device_type = device.get("device_type")
+                            saveDevice.device_ip = device.get("device_ip")
+                            saveDevice.mesh_ip = device.get("mesh_ip")
+                            saveDevice.lidar_ip = device.get("lidar_ip")
+                            saveDevice.save()
+                        else:
+                            saveDevice = DeviceList.create()
+                            saveDevice.device_name = device.get("device_name")
+                            saveDevice.device_type = device.get("device_type")
+                            saveDevice.device_ip = device.get("device_ip")
+                            saveDevice.mesh_ip = device.get("mesh_ip")
+                            saveDevice.lidar_ip = device.get("lidar_ip")
+                            saveDevice.device_status = 0
+                            saveDevice.creator = "ros"
+                            saveDevice.updater = "ros"
+                            saveDevice.save()
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device update successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "device update no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_name == "query":
+                topic_type = msg.get("_topic_type", None)
+                if topic_type == "one":
+                    device = DeviceList.get_or_none(DeviceList.id == msg.get("id"))
+                    json_list = []
+                    if device is not None:
+                        jDevice = {}
+                        jDevice["id"] = device.id
+                        jDevice["device_name"] = device.device_name
+                        jDevice["device_ip"] = device.device_ip
+                        jDevice["device_type"] = device.device_type
+                        jDevice["mesh_ip"] = device.mesh_ip
+                        jDevice["lidar_ip"] = device.lidar_ip
+                        jDevice["device_delay"] = device.device_delay
+                        jDevice["device_status"] = device.device_status
+                        json_list.append(jDevice)
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_device_list": json_list,
+                            "message": "device query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                elif topic_type == "page":
+                    page = msg.get("page", 1)
+                    size = msg.get("size", 20)
+                    device_list = DeviceList.select().paginate(page, size)
+                    json_list = []
+                    if device_list is not None and len(device_list) > 0:
+                        print("query_device: size: %s" % len(device_list))
+                        for device in device_list:
+                            jDevice = {}
+                            jDevice["id"] = device.id
+                            jDevice["device_name"] = device.device_name
+                            jDevice["device_ip"] = device.device_ip
+                            jDevice["device_type"] = device.device_type
+                            jDevice["mesh_ip"] = device.mesh_ip
+                            jDevice["lidar_ip"] = device.lidar_ip
+                            jDevice["device_delay"] = device.device_delay
+                            jDevice["device_status"] = device.device_status
+                            json_list.append(jDevice)
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_device_list": json_list,
+                            "message": "device query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    device_list = DeviceList.select()
+                    json_list = []
+                    if device_list is not None and len(device_list) > 0:
+                        print("query_device: size: %s" % len(device_list))
+                        for device in device_list:
+                            jDevice = {}
+                            jDevice["id"] = device.id
+                            jDevice["device_name"] = device.device_name
+                            jDevice["device_ip"] = device.device_ip
+                            jDevice["device_type"] = device.device_type
+                            jDevice["mesh_ip"] = device.mesh_ip
+                            jDevice["lidar_ip"] = device.lidar_ip
+                            jDevice["device_delay"] = device.device_delay
+                            jDevice["device_status"] = device.device_status
+                            json_list.append(jDevice)
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_device_list": json_list,
+                            "message": "device query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -1,
+                        "_topic_name": topic_name,
+                        "message": "topic_name not found.",
+                    }]
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_video(self, sock: socket, msg: json):
+        # send video data to Media server
+        if msg is None or sock is None:
+            print("sync_video msg is None.")
+            return
+        try:
+            topic_name = msg.get("_topic_name")
+            topic_type = msg.get("_topic_type")
+            if topic_name == "rtsp":
+                json_list = []
+                ip_list = msg.pop("_ip_list", None)
+                if ip_list is not None and len(ip_list) > 0:
+                    for ip in ip_list:
+                        url = "rtsp://%s:5554/live/push" % ip
+                        json_list.append(url)
+                msg["code"] = 0
+                msg["_url_list"] = json_list
+                json_ok = [
+                    ROSBoardSocketHandler.MSG_VIDEO,
+                    msg]
+                print("message: video_data ok: %s" % json_ok)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            else:
+                msg["code"] = -1
+                msg["_url_list"] = []
+                json_err = [
+                    ROSBoardSocketHandler.MSG_VIDEO,
+                    msg]
+                print("message: video_data not support: %s" % json_err)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_pcd(self, msg: json):
+        # save pcd data to server
+        if msg is None:
+            print("sync_pcd msg is None.")
+            return
+        try:
+            sid = msg.pop("_sid", None)
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "query":
+                topic_type = msg.get("_topic_type", None)
+                if topic_type == "one":
+                    pm = InfraFile.get_or_none(InfraFile.id == msg.get("id"))
+                    json_list = []
+                    if pm is not None:
+                        pd = model_to_dict(pm)
+                        if pd["type"] == "pcd":
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["pgm_path"] = pd["path"]
+                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pcd_list": json_list,
+                            "message": "pcd query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                elif topic_type == "page":
+                    page = msg.get("page", 1)
+                    size = msg.get("size", 20)
+                    pModels = InfraFile.select().where(InfraFile.type=="pcd").paginate(page, size)
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_pcd: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["path"] = pd["path"]
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pcd_list": json_list,
+                            "message": "pcd query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    pModels = InfraFile.select().where(InfraFile.type=="pcd")
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_pcd: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["path"] = pd["path"]
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pcd_list": json_list,
+                            "message": "pcd query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+            elif topic_name == "del":
+                pModels = msg.get("_pcd_list", None)
+                if pModels is not None and len(pModels) > 0:
+                    print("delete_pcd: size: %s" % len(pModels))
+                    for pd in pModels:
+                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
+                        if delP is not None:
+                            if os.path.isfile(delP.path):
+                                os.remove(delP.path)
+                            delP.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "message": "pcd delete successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": 0,
+                        "message": "pcd delete no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_PCD,
+                    {
+                        "code": -1,
+                        "message": "pcd not found.",
+                    }]
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
+    def sync_pgm(self, msg: json):
+        # save pgm data to server
+        if msg is None:
+            print("sync_pgm msg is None.")
+            return
+        try:
+            sid = msg.pop("_sid", None)
+            topic_name = msg.get("_topic_name", None)
+            if topic_name == "query":
+                topic_type = msg.get("_topic_type", None)
+                if topic_type == "one":
+                    pm = InfraFile.get_or_none(InfraFile.id == msg.get("id"))
+                    json_list = []
+                    if pm is not None:
+                        pd = model_to_dict(pm)
+                        if pd["type"] == "pgm":
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["pgm_path"] = pd["path"]
+                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pgm_list": json_list,
+                            "message": "pgm query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                elif topic_type == "page":
+                    page = msg.get("page", 1)
+                    size = msg.get("size", 20)
+                    pModels = InfraFile.select().where(InfraFile.type=="pgm").paginate(page, size)
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_pgm: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["pgm_path"] = pd["path"]
+                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pgm_list": json_list,
+                            "message": "pgm query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    pModels = InfraFile.select().where(InfraFile.type=="pgm")
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_pgm: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["name"] = pd["name"]
+                            jpd["pgm_path"] = pd["path"]
+                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["type"] = pd["type"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_pgm_list": json_list,
+                            "message": "pgm query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+            elif topic_name == "del":
+                pModels = msg.get("_pgm_list", None)
+                if pModels is not None and len(pModels) > 0:
+                    print("delete_pgm: size: %s" % len(pModels))
+                    for pd in pModels:
+                        delP = InfraFile.get_or_none(InfraFile.id == pd.get("id"))
+                        if delP is not None:
+                            if os.path.isfile(delP.path):
+                                os.remove(delP.path)
+                            delP.delete_instance()
+                        yaml = delP.path.replace(".pgm", ".yaml")
+                        dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
+                        if dYaml is not None:
+                            if os.path.isfile(yaml):
+                                os.remove(yaml)
+                            dYaml.delete_instance()
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "pgm delete successfully",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "message": "pgm delete no data",
+                    }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            else:
+                json_err = [ROSBoardSocketHandler.MSG_PGM,
+                    {
+                        "code": -1,
+                        "message": "pgm not found.",
+                    }]
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
+
     def save_map(self, msg: json):
         if msg is None:
             print("save_map msg is None.")
@@ -1098,27 +1254,77 @@ class ROSBoardNode(object):
             sid = msg.pop("_sid", None)
             topic_name = msg.get("_topic_name", None)
             if topic_name == "query":
-                pModels = DeviceLog.select()
-                pDicts = [model_to_dict(pm) for pm in pModels]
-                json_list = []
-                if pDicts is not None and len(pDicts) > 0:
-                    print("query_log: size: %s" % len(pDicts))
-                    for pd in pDicts:
-                        js = {}
-                        js["id"] = pd["id"]
-                        js["device"] = pd["device"]
-                        js["type"] = pd["type"]
-                        js["log"] = pd["log"]
-                        js["time"] = pd["create_time"]
-                        json_list.append(js)
-                json_ok = [ROSBoardSocketHandler.MSG_LOG,
-                    {
-                        "code": 0,
-                        "_topic_name": topic_name,
-                        "_log_list": json_list,
-                        "message": "log query successfully",
-                    }]
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                topic_type = msg.get("_topic_type", None)
+                if topic_type == "one":
+                    pm = DeviceLog.get_or_none(DeviceLog.id == msg.get("id"))
+                    json_list = []
+                    if pm is not None:
+                        pd = model_to_dict(pm)
+                        jpd = {}
+                        jpd["id"] = pd["id"]
+                        jpd["device"] = pd["device"]
+                        jpd["type"] = pd["type"]
+                        jpd["log"] = pd["log"]
+                        jpd["time"] = pd["create_time"]
+                        json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_LOG,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_log_list": json_list,
+                            "message": "log query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                elif topic_type == "page":
+                    page = msg.get("page", 1)
+                    size = msg.get("size", 20)
+                    # pQuery = DeviceLog.select()
+                    pModels = DeviceLog.select().paginate(page, size)
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_log: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["device"] = pd["device"]
+                            jpd["type"] = pd["type"]
+                            jpd["log"] = pd["log"]
+                            jpd["time"] = pd["create_time"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_LOG,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_log_list": json_list,
+                            "message": "log query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    pModels = DeviceLog.select()
+                    json_list = []
+                    if pModels is not None and len(pModels) > 0:
+                        pDicts = [model_to_dict(pm) for pm in pModels]
+                        print("query_log: size: %s" % len(pDicts))
+                        for pd in pDicts:
+                            jpd = {}
+                            jpd["id"] = pd["id"]
+                            jpd["device"] = pd["device"]
+                            jpd["type"] = pd["type"]
+                            jpd["log"] = pd["log"]
+                            jpd["time"] = pd["create_time"]
+                            json_list.append(jpd)
+                    json_ok = [ROSBoardSocketHandler.MSG_LOG,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_log_list": json_list,
+                            "message": "log query successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             elif topic_name == "del":
                 pModels = msg.get("_log_list", None)
                 if pModels is not None and len(pModels) > 0:
