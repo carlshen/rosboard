@@ -46,7 +46,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
 
         ROSBoardSocketHandler.sockets.add(self)
 
-        # self.node.sync_topics(self)
         self.write_message(json.dumps([ROSBoardSocketHandler.MSG_SYSTEM, {
             "hostname": self.node.title,
             "version": __version__,
@@ -280,7 +279,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("message: point_cloud_data: %s" % json_err)
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
-            elif point_cloud_data.get("_topic_name") == "query" or point_cloud_data.get("_topic_name") == "del":
+            elif point_cloud_data.get("_topic_name") == "query" or point_cloud_data.get("_topic_name") == "del" \
+                    or point_cloud_data.get("_topic_name") == "file":
                 point_cloud_data["_msg"] = ROSBoardSocketHandler.MSG_PCD
                 point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
@@ -308,7 +308,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("message: point_cloud_map: %s" % json_err)
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
-            elif point_cloud_map.get("_topic_name") == "query" or point_cloud_map.get("_topic_name") == "del":
+            elif point_cloud_map.get("_topic_name") == "query" or point_cloud_map.get("_topic_name") == "del" \
+                    or point_cloud_map.get("_topic_name") == "file":
                 point_cloud_map["_msg"] = ROSBoardSocketHandler.MSG_PGM
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)

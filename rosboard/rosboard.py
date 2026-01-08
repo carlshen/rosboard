@@ -18,6 +18,7 @@ import tornado, tornado.web
 import traceback
 from playhouse.shortcuts import model_to_dict
 from ping3 import ping
+import base64
 
 if os.environ.get("ROS_VERSION") == "1":
     import rospy # ROS1
@@ -130,7 +131,11 @@ class ROSBoardNode(object):
         rospy.loginfo("ROSboard listening on :%d" % self.port)
 
     def start(self):
-        rospy.spin()
+        try:
+            rospy.spin()
+        except Exception as e:
+            rospy.logwarn(str(e))
+            traceback.print_exc()
 
     def get_msg_class(self, msg_type):
         """
@@ -209,7 +214,7 @@ class ROSBoardNode(object):
             for device in device_list:
                 host = device.device_ip
                 latency = ping(host, timeout=1)
-                print("sync_status: host: %s, latency: %s" % (host, latency))
+                # print("sync_status: host: %s, latency: %s" % (host, latency))
                 if latency is None:
                     device.device_delay = "--ms"
                     device.device_status = 0
@@ -225,7 +230,7 @@ class ROSBoardNode(object):
         Periodically calls self.sync_subs(). Intended to be run in a thread.
         """
         while True:
-            time.sleep(1)
+            time.sleep(2)
             self.sync_subs()
 
     def sync_subs(self):
@@ -248,10 +253,10 @@ class ROSBoardNode(object):
                     topic_type = topic_type[0] # ROS2
                 self.all_topics[topic_name] = topic_type
 
-            # self.event_loop.add_callback(
-            #     ROSBoardSocketHandler.broadcast,
-            #     [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
-            # )
+            self.event_loop.add_callback(
+                ROSBoardSocketHandler.broadcast,
+                [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ]
+            )
 
             for topic_name in self.remote_subs:
                 if len(self.remote_subs[topic_name]) == 0:
@@ -623,7 +628,7 @@ class ROSBoardNode(object):
             print("process_message: save file ok, save to db: %s" % file_path)
             saveFile = InfraFile.create()
             saveFile.name = Path(file_path).name
-            saveFile.path = file_path
+            saveFile.path = file_path.__str__()
             saveFile.url = ""
             saveFile.type = "pcd"
             saveFile.size = os.path.getsize(file_path)
@@ -974,6 +979,30 @@ class ROSBoardNode(object):
                         "message": "pcd delete no data",
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_name == "file":
+                path = msg.get("path", None)
+                if path is not None and os.path.isfile(path):
+                    content = None
+                    with open(path, 'rb') as f:
+                        content = f.read()
+                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "path": path,
+                            "content": base64.b64encode(content).decode(),
+                            "message": "pcd file get successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PCD,
+                        {
+                            "code": -1,
+                            "_topic_name": topic_name,
+                            "path": path,
+                            "message": "pcd file get failed, file not found.",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_PCD,
                     {
@@ -1093,6 +1122,30 @@ class ROSBoardNode(object):
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "pgm delete no data",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_name == "file":
+                path = msg.get("path", None)
+                if path is not None and os.path.isfile(path):
+                    content = None
+                    with open(path, 'rb') as f:
+                        content = f.read()
+                    json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "path": path,
+                            "content": base64.b64encode(content).decode(),
+                            "message": "pgm file get successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_PGM,
+                        {
+                            "code": -1,
+                            "_topic_name": topic_name,
+                            "path": path,
+                            "message": "pgm file get failed, file not found.",
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
