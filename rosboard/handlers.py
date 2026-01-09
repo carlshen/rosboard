@@ -250,20 +250,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("message: device_data: %s" % json_err)
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
-        elif argv[0] == ROSBoardSocketHandler.MSG_VIDEO:
-            # send message of current video
-            # print("message: video: %s" % message)
-            video_data = argv[1]
-            if video_data is not None:
-                self.node.sync_video(self, video_data)
-            else:
-                video_data["code"] = -100
-                json_err = [
-                    ROSBoardSocketHandler.MSG_VIDEO,
-                    video_data]
-                print("message: video_data: %s" % json_err)
-                if self and self.ws_connection and not self.ws_connection.is_closing():
-                    self.write_message(json.dumps(json_err))
         elif argv[0] == ROSBoardSocketHandler.MSG_PCD:
             # save to file and insert into DB
             # print("message: file: %s" % message)

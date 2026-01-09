@@ -56,6 +56,8 @@ class DeviceList(BaseModel):
     lidar_ip = peewee.TextField(default='', verbose_name='lidar_ip', help_text='激光雷达IP')
     device_delay = peewee.TextField(default='', verbose_name='device_delay', help_text='设备延迟')
     device_status = peewee.IntegerField(default=0, verbose_name='device_status', help_text='设备状态')
+    pull_key = peewee.TextField(default='', verbose_name='pull_key', help_text='pull key')
+    push_key = peewee.TextField(default='', verbose_name='push_key', help_text='push key')
     device_desc = peewee.TextField(default='', verbose_name='device_desc', help_text='设备描述')
     creator = peewee.TextField(default='', verbose_name='creator', help_text='创建者')
     updater = peewee.TextField(default='', verbose_name='updater', help_text='更新者')

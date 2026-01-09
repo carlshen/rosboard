@@ -19,6 +19,7 @@ import traceback
 from playhouse.shortcuts import model_to_dict
 from ping3 import ping
 import base64
+import requests
 
 if os.environ.get("ROS_VERSION") == "1":
     import rospy # ROS1
@@ -39,7 +40,7 @@ from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
-from rosboard.config import SAVE_DIR, FILE_TYPE
+from rosboard.config import SAVE_DIR, FILE_TYPE, redis_pass, pull_add, secret, vhost, app, stream, url
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
@@ -118,6 +119,7 @@ class ROSBoardNode(object):
         self.DATA_DIR = Path.home() / SAVE_DIR
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+        # self.redis_client = redis.StrictRedis(host="localhost", port=6379, password=redis_pass, db=0, decode_responses=True)
         self.message_queue = queue.Queue(maxsize=10)
         self.message_num = 0
         # loop to keep track of message for save pcd file
@@ -831,6 +833,50 @@ class ROSBoardNode(object):
                             "message": "device query successfully",
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+            elif topic_name == "video":
+                device_list = msg.get("_device_list", None)
+                if device_list is not None and len(device_list) > 0:
+                    json_list = []
+                    for item in device_list:
+                        device = DeviceList.get_or_none(DeviceList.id == item.get("id"))
+                        if device is not None:
+                            # url = "rtsp://{}:8554/live/back".format(item.get("ip"))
+                            sUrl = url.format(item.get("ip"))
+                            requ = "{}?secret={}&vhost={}&app={}&stream={}&url={}".format(
+                                pull_add, secret, vhost, app, stream, sUrl)
+                            #requ = "http://192.168.0.215:8080/index/api/addStreamProxy?secret=s6TV6T3ZOSqz43m5Kbg5XyxF90Hr6aog&vhost=__defaultVhost__&app=live&stream=test&url=rtsp%3A%2F%2F192.168.0.215%3A8554%2Flive%2Fback&retry_count=-1&rtp_type=0&timeout_sec=5&enable_hls=false&enable_hls_fmp4=false&enable_mp4=false&enable_rtsp=true&enable_rtmp=true&enable_ts=true&enable_fmp4=true&hls_demand=false&rtsp_demand=false&rtmp_demand=false&ts_demand=false&fmp4_demand=false&enable_audio=true&add_mute_audio=true&mp4_max_second=10&mp4_as_player=false&auto_close=false"
+                            print("message: video url request: %s" % requ)
+                            resp = requests.get(requ, timeout=2)
+                            if resp is not None and (resp.status_code == 200):
+                                print("message: video url resp: %s" % resp.text)
+                                resp_json = resp.json()
+                                print("message: video url resp_json: %s" % resp_json)
+                                if resp_json.get("code", -1) == 0:
+                                    device.pull_key = resp_json.get("data", {}).get("key", "")
+                                    device.save()
+                            else:
+                                print("message: video url response: %s" % resp)
+                        jDevice = {}
+                        jDevice["id"] = item.get("id")
+                        jDevice["ip"] = item.get("ip")
+                        jDevice["url"] = "rtsp://{}:5554/live/push{}".format(item.get("ip"), item.get("id"))
+                        json_list.append(jDevice)
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_device_list": json_list,
+                            "message": "device video url successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "message": "device video url no data",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_DEVICE,
                     {
@@ -839,43 +885,6 @@ class ROSBoardNode(object):
                         "message": "topic_name not found.",
                     }]
                 self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
-        except Exception as e:
-            rospy.logwarn(str(e))
-            traceback.print_exc()
-
-    def sync_video(self, sock: socket, msg: json):
-        # send video data to Media server
-        if msg is None or sock is None:
-            print("sync_video msg is None.")
-            return
-        try:
-            topic_name = msg.get("_topic_name")
-            topic_type = msg.get("_topic_type")
-            if topic_name == "rtsp":
-                json_list = []
-                ip_list = msg.pop("_ip_list", None)
-                if ip_list is not None and len(ip_list) > 0:
-                    for ip in ip_list:
-                        url = "rtsp://%s:5554/live/push" % ip
-                        json_list.append(url)
-                msg["code"] = 0
-                msg["_url_list"] = json_list
-                json_ok = [
-                    ROSBoardSocketHandler.MSG_VIDEO,
-                    msg]
-                print("message: video_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
-            else:
-                msg["code"] = -1
-                msg["_url_list"] = []
-                json_err = [
-                    ROSBoardSocketHandler.MSG_VIDEO,
-                    msg]
-                print("message: video_data not support: %s" % json_err)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_err))
 
         except Exception as e:
             rospy.logwarn(str(e))
