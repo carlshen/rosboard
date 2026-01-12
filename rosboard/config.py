@@ -17,8 +17,11 @@ secret="s6TV6T3ZOSqz43m5Kbg5XyxF90Hr6aog"
 vhost="__defaultVhost__"
 app="live"
 stream="test"
-# url="rtsp%3A%2F%2F192.168.0.215%3A8554%2Flive%2Fback"
-url="rtsp%3A%2F%2F{}%3A8554%2Flive%2Fback"
+schema="rtsp"
+pull_port=8554
+push_port=5554
+pull_url="rtsp://{}:{}/live/back"
+push_url="rtsp://{}:{}/live/push"
 
 # 项目调试模式配置
 debug = True

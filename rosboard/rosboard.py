@@ -40,7 +40,8 @@ from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
-from rosboard.config import SAVE_DIR, FILE_TYPE, redis_pass, pull_add, secret, vhost, app, stream, url
+from rosboard.config import SAVE_DIR, FILE_TYPE, redis_pass, secret, vhost, app, stream, schema
+from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from sensor_msgs.msg import PointCloud2
@@ -835,38 +836,111 @@ class ROSBoardNode(object):
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             elif topic_name == "video":
                 device_list = msg.get("_device_list", None)
-                if device_list is not None and len(device_list) > 0:
+                topic_type = msg.get("_topic_type", None)
+                if topic_type == "del" and device_list is not None and len(device_list) > 0:
                     json_list = []
                     for item in device_list:
                         device = DeviceList.get_or_none(DeviceList.id == item.get("id"))
+                        status = -1
                         if device is not None:
-                            # url = "rtsp://{}:8554/live/back".format(item.get("ip"))
-                            sUrl = url.format(item.get("ip"))
-                            requ = "{}?secret={}&vhost={}&app={}&stream={}&url={}".format(
-                                pull_add, secret, vhost, app, stream, sUrl)
-                            #requ = "http://192.168.0.215:8080/index/api/addStreamProxy?secret=s6TV6T3ZOSqz43m5Kbg5XyxF90Hr6aog&vhost=__defaultVhost__&app=live&stream=test&url=rtsp%3A%2F%2F192.168.0.215%3A8554%2Flive%2Fback&retry_count=-1&rtp_type=0&timeout_sec=5&enable_hls=false&enable_hls_fmp4=false&enable_mp4=false&enable_rtsp=true&enable_rtmp=true&enable_ts=true&enable_fmp4=true&hls_demand=false&rtsp_demand=false&rtmp_demand=false&ts_demand=false&fmp4_demand=false&enable_audio=true&add_mute_audio=true&mp4_max_second=10&mp4_as_player=false&auto_close=false"
-                            print("message: video url request: %s" % requ)
+                            # del pull url
+                            requ = "{}?secret={}&key={}".format(pull_del, secret, device.pull_key)
+                            print("message: video pull url request: %s" % requ)
                             resp = requests.get(requ, timeout=2)
                             if resp is not None and (resp.status_code == 200):
-                                print("message: video url resp: %s" % resp.text)
                                 resp_json = resp.json()
-                                print("message: video url resp_json: %s" % resp_json)
+                                print("message: video pull url resp: %s" % resp_json)
                                 if resp_json.get("code", -1) == 0:
-                                    device.pull_key = resp_json.get("data", {}).get("key", "")
-                                    device.save()
+                                    device.pull_key = ""
+                                    status = 0
+                            # del push url
+                            dstStatus = -1
+                            requ = "{}?secret={}&key={}".format(push_del, secret, device.push_key)
+                            print("message: video push url request: %s" % requ)
+                            resp = requests.get(requ, timeout=2)
+                            if resp is not None and (resp.status_code == 200):
+                                resp_json = resp.json()
+                                print("message: video push url resp: %s" % resp_json)
+                                if resp_json.get("code", -1) == 0:
+                                    device.push_key = ""
+                                    dstStatus = 0
+                            if dstStatus == 0 and status == 0:
+                                device.save()
+                                status = 0
                             else:
-                                print("message: video url response: %s" % resp)
+                                status = -1
+                        else:
+                            print("message: video url del no need as not in device")
+                            status = -1
                         jDevice = {}
                         jDevice["id"] = item.get("id")
                         jDevice["ip"] = item.get("ip")
-                        jDevice["url"] = "rtsp://{}:5554/live/push{}".format(item.get("ip"), item.get("id"))
+                        jDevice["status"] = status
                         json_list.append(jDevice)
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
                         {
                             "code": 0,
                             "_topic_name": topic_name,
+                            "_topic_type": topic_type,
                             "_device_list": json_list,
-                            "message": "device video url successfully",
+                            "message": "device video url del successfully",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                elif topic_type == "add" and device_list is not None and len(device_list) > 0:
+                    json_list = []
+                    for item in device_list:
+                        device = DeviceList.get_or_none(DeviceList.id == item.get("id"))
+                        status = -1
+                        dstUrl = ""
+                        if device is not None:
+                            # set pull url
+                            sUrl = pull_url.format(item.get("ip"), pull_port)
+                            requ = "{}?secret={}&vhost={}&app={}&stream={}&url={}".format(
+                                pull_add, secret, vhost, app, stream, sUrl)
+                            print("message: video pull url request: %s" % requ)
+                            resp = requests.get(requ, timeout=2)
+                            if resp is not None and (resp.status_code == 200):
+                                resp_json = resp.json()
+                                print("message: video pull url resp: %s" % resp_json)
+                                if resp_json.get("code", -1) == 0:
+                                    device.pull_key = resp_json.get("data", {}).get("key", "")
+                                    status = 0
+                                elif (resp_json.get("code", -1) == -1) and (resp_json.get("msg", "") == "This stream already exists"):
+                                    status = 0
+                            # set push url
+                            dstStatus = -1
+                            dstUrl = push_url.format(item.get("ip"), push_port)
+                            requ = "{}?secret={}&vhost={}&app={}&stream={}&schema={}&dst_url={}".format(
+                                push_add, secret, vhost, app, stream, schema, dstUrl)
+                            print("message: video push url request: %s" % requ)
+                            resp = requests.get(requ, timeout=2)
+                            if resp is not None and (resp.status_code == 200):
+                                resp_json = resp.json()
+                                print("message: video push url resp: %s" % resp_json)
+                                if resp_json.get("code", -1) == 0:
+                                    device.push_key = resp_json.get("data", {}).get("key", "")
+                                    dstStatus = 0
+                            if dstStatus == 0 and status == 0:
+                                device.save()
+                                status = 0
+                            else:
+                                status = -1
+                        else:
+                            print("message: video url add no need as not in device")
+                            status = -1
+                        jDevice = {}
+                        jDevice["id"] = item.get("id")
+                        jDevice["ip"] = item.get("ip")
+                        jDevice["status"] = status
+                        jDevice["url"] = dstUrl
+                        json_list.append(jDevice)
+                    json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
+                        {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "_topic_type": topic_type,
+                            "_device_list": json_list,
+                            "message": "device video url add successfully",
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
@@ -874,6 +948,7 @@ class ROSBoardNode(object):
                         {
                             "code": 0,
                             "_topic_name": topic_name,
+                            "_topic_type": topic_type,
                             "message": "device video url no data",
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
