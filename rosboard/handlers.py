@@ -18,6 +18,9 @@ class NoCacheStaticFileHandler(tornado.web.StaticFileHandler):
 class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
     sockets = set()
 
+    def check_origin(self, origin):
+        return True
+
     def initialize(self, node):
         # store the instance of the ROS node that created this WebSocketHandler so we can access it later
         self.node = node
