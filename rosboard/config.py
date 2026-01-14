@@ -8,6 +8,7 @@ mysql_port = 3306
 
 # redis数据库配置
 redis_link = "redis://localhost"
+# redis_link = "redis://127.0.0.1:8001"
 redis_pass = "redis_e2iaWP"
 pull_add = "http://127.0.0.1:8080/index/api/addStreamProxy"
 pull_del = "http://127.0.0.1:8080/index/api/delStreamProxy"

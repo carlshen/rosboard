@@ -44,6 +44,7 @@ from rosboard.config import SAVE_DIR, FILE_TYPE, redis_pass, secret, vhost, app,
 from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
+from nav_msgs.msg import Path as PPath
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
 from std_msgs.msg import Header, String
@@ -391,7 +392,36 @@ class ROSBoardNode(object):
             topic_name = msg.pop("_topic_name", None)
             topic_type = msg.pop("_topic_type", None)
             # print("process_tasks: task msg: %s" % msg)
-            if msg is not None and not rospy.is_shutdown():
+            if topic_type == "nav_msgs/Path" and not rospy.is_shutdown():
+                ptime = rospy.Time.now()
+                ptime.secs = msg['header']['stamp']['secs']
+                ptime.nsecs = msg['header']['stamp']['nsecs']
+                pHeader = Header(stamp=ptime, frame_id=msg['header']['frame_id'])
+                posarr = []
+                for item in msg['poses']:
+                    stime = rospy.Time.now()
+                    stime.secs = item['header']['stamp']['secs']
+                    stime.nsecs = item['header']['stamp']['nsecs']
+                    header = Header(stamp=stime, frame_id=item['header']['frame_id'])
+                    position = Point(x=item['pose']['position']['x'], y=item['pose']['position']['y'], z=item['pose']['position']['z'])
+                    orientation = Quaternion(x=item['pose']['orientation']['x'], y=item['pose']['orientation']['y'], z=item['pose']['orientation']['z'], w=item['pose']['orientation']['w'])
+                    pose = Pose(position=position, orientation=orientation)
+                    posarr.append(PoseStamped(header=header, pose=pose))
+                pospath = PPath(header=pHeader, poses=posarr)
+                pub = rospy.Publisher(topic_name, PPath, queue_size=10)
+                pub.publish(pospath)
+                rospy.loginfo("Published message pose_path: %s", pospath)
+                json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                    {
+                        "code": 0,
+                        "_topic_name": topic_name,
+                        "_topic_type": topic_type,
+                        "message": "task data send successfully",
+                   }]
+                print("sync_tasks task_data ok: %s" % json_ok)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
+            elif topic_type == "geometry_msgs/PoseStamped" and not rospy.is_shutdown():
                 stime = rospy.Time.now()
                 stime.secs = msg['header']['stamp']['secs']
                 stime.nsecs = msg['header']['stamp']['nsecs']
@@ -846,6 +876,16 @@ class ROSBoardNode(object):
                         device = DeviceList.get_or_none(DeviceList.id == item.get("id"))
                         status = -1
                         if device is not None:
+                            # del push url
+                            requ = "{}?secret={}&key={}".format(push_del, secret, device.push_key)
+                            print("message: video push url request: %s" % requ)
+                            resp = requests.get(requ, timeout=2)
+                            if resp is not None and (resp.status_code == 200):
+                                resp_json = resp.json()
+                                print("message: video push url resp: %s" % resp_json)
+                                if resp_json.get("code", -1) == 0:
+                                    device.push_key = ""
+                                    device.save()
                             # del pull url
                             requ = "{}?secret={}&key={}".format(pull_del, secret, device.pull_key)
                             print("message: video pull url request: %s" % requ)
@@ -854,27 +894,11 @@ class ROSBoardNode(object):
                                 resp_json = resp.json()
                                 print("message: video pull url resp: %s" % resp_json)
                                 if resp_json.get("code", -1) == 0:
-                                    flag = resp_json.get("data", {}).get("flag", false)
-                                    if flag == true:
+                                    flag = resp_json.get("data", {}).get("flag", False)
+                                    if flag == True:
                                         device.pull_key = ""
                                         device.save()
-                                    status = 0
-                            # del push url
-                            dstStatus = -1
-                            requ = "{}?secret={}&key={}".format(push_del, secret, device.push_key)
-                            print("message: video push url request: %s" % requ)
-                            resp = requests.get(requ, timeout=2)
-                            if resp is not None and (resp.status_code == 200):
-                                resp_json = resp.json()
-                                print("message: video push url resp: %s" % resp_json)
-                                if resp_json.get("code", -1) == 0:
-                                    flag = resp_json.get("data", {}).get("flag", false)
-                                    if flag == true:
-                                        device.push_key = ""
-                                        device.save()
-                                    dstStatus = 0
-                            if dstStatus == 0 and status == 0:
-                                device.save()
+                            if len(device.push_key) == 0 and len(device.pull_key) == 0:
                                 status = 0
                             else:
                                 status = -1
@@ -915,10 +939,7 @@ class ROSBoardNode(object):
                                     device.pull_key = resp_json.get("data", {}).get("key", "")
                                     device.save()
                                     status = 0
-                                elif (resp_json.get("code", -1) == -1) and (resp_json.get("msg", "") == "This stream already exists"):
-                                    status = 0
                             # set push url
-                            dstStatus = -1
                             dstUrl = push_url.format(item.get("ip"), push_port)
                             requ = "{}?secret={}&vhost={}&app={}&stream={}&schema={}&dst_url={}".format(
                                 push_add, secret, vhost, app, stream, schema, dstUrl)
@@ -930,8 +951,7 @@ class ROSBoardNode(object):
                                 if resp_json.get("code", -1) == 0:
                                     device.push_key = resp_json.get("data", {}).get("key", "")
                                     device.save()
-                                    dstStatus = 0
-                            if dstStatus == 0 and status == 0:
+                            if len(device.push_key) > 0 and len(device.pull_key) > 0:
                                 status = 0
                             else:
                                 status = -1
