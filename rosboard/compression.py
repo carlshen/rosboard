@@ -207,7 +207,7 @@ def compress_occupancy_grid(msg, output):
     if simplejpeg is None and cv2 is None and PIL is None:
         output["_error"] = "Please install simplejpeg, cv2 (OpenCV), or PIL (pillow) for image support."
         return
-    
+    cv2_img = None
     try:
         occupancy_map = np.array(msg.data, dtype=np.uint16).reshape(msg.info.height, msg.info.width)[::-1,:]
 
@@ -223,7 +223,8 @@ def compress_occupancy_grid(msg, output):
         output["_error"] = str(e)
     try:
         img_jpeg = encode_jpeg(cv2_img)
-        output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
+        # output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
+        output["_data_jpeg"] = img_jpeg
     except OSError as e:
         output["_error"] = str(e)
 

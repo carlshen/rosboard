@@ -35,6 +35,7 @@ else:
 from rosgraph_msgs.msg import Log
 
 from rosboard.serialization import ros2dict
+from rosboard.compression import compress_occupancy_grid
 from rosboard.subscribers.dmesg_subscriber import DMesgSubscriber
 from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
@@ -121,7 +122,7 @@ class ROSBoardNode(object):
         self.DATA_DIR = Path.home() / SAVE_DIR
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
-        # self.redis_client = redis.StrictRedis(host="localhost", port=6379, password=redis_pass, db=0, decode_responses=True)
+        # self.redis_client = redis.StrictRedis(host="127.0.0.1", port=8001, password=redis_pass, db=0, decode_responses=True)
         self.message_queue = queue.Queue(maxsize=10)
         self.message_num = 0
         # loop to keep track of message for save pcd file
@@ -1148,6 +1149,7 @@ class ROSBoardNode(object):
                         jpd["name"] = pm.name
                         jpd["path"] = pm.path
                         jpd["yaml_path"] = pm.path.replace(".pgm", ".yaml")
+                        jpd["jpeg_path"] = pm.path.replace(".pgm", ".jpeg")
                         jpd["type"] = pm.type
                         json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1173,6 +1175,7 @@ class ROSBoardNode(object):
                             jpd["name"] = pd["name"]
                             jpd["path"] = pd["path"]
                             jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1196,6 +1199,7 @@ class ROSBoardNode(object):
                             jpd["name"] = pd["name"]
                             jpd["path"] = pd["path"]
                             jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1223,6 +1227,12 @@ class ROSBoardNode(object):
                             if os.path.isfile(yaml):
                                 os.remove(yaml)
                             dYaml.delete_instance()
+                        jpeg = delP.path.replace(".pgm", ".jpeg")
+                        dJpeg = InfraFile.get_or_none(InfraFile.path == jpeg)
+                        if dJpeg is not None:
+                            if os.path.isfile(jpeg):
+                                os.remove(jpeg)
+                            dJpeg.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
                         {
                         "code": 0,
@@ -1288,10 +1298,12 @@ class ROSBoardNode(object):
             base = self.map_filename()
         pgm_path = base.__str__() + ".pgm"
         yaml_path = base.__str__() + ".yaml"
+        jpeg_path = base.__str__() + ".jpeg"
         ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', msg)
         # Save image (simple PGM) and YAML metadata compatible with yaml_server
         self.save_pgm(ros_msg, pgm_path)
         self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
+        self.save_jpeg(ros_msg, jpeg_path)
         # save to db for map files
         if os.path.exists(pgm_path):
             print("save_map: save pgm_path ok, save to db: %s" % pgm_path)
@@ -1321,13 +1333,28 @@ class ROSBoardNode(object):
             saveFile.save()
         else:
             print("save_map: save yaml_path error: %s" % yaml_path)
-        if os.path.exists(pgm_path) and os.path.exists(yaml_path):
+        if os.path.exists(jpeg_path):
+            print("save_map: save jpeg_path ok, save to db: %s" % jpeg_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(jpeg_path).name
+            saveFile.path = jpeg_path
+            saveFile.url = ""
+            saveFile.type = "jpeg"
+            saveFile.size = os.path.getsize(jpeg_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        else:
+            print("save_map: save jpeg_path error: %s" % jpeg_path)
+        if os.path.exists(pgm_path) and os.path.exists(yaml_path) and os.path.exists(jpeg_path):
             json_ok = [ROSBoardSocketHandler.MSG_PGM,
                 {
                     "code": 0,
                     "message": "Point cloud map saved successfully",
                     "path": pgm_path,
                     "yaml_path": yaml_path,
+                    "jpeg_path": jpeg_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         elif os.path.exists(pgm_path):
@@ -1376,6 +1403,13 @@ class ROSBoardNode(object):
         }
         with open(yaml_path, "w") as f:
             yaml.dump(data, f)
+
+    def save_jpeg(self, msg: OccupancyGrid, jpeg_path: str):
+        output = {}
+        compress_occupancy_grid(msg, output)
+        if output.get("_data_jpeg", None) is not None:
+            with open(jpeg_path, "wb") as f:
+                f.write(output["_data_jpeg"])
 
     def saveros_loop(self):
         """
