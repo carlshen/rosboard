@@ -41,7 +41,7 @@ from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
-from rosboard.config import SAVE_DIR, FILE_TYPE, redis_pass, secret, vhost, app, stream, schema
+from rosboard.config import SAVE_DIR, FILE_TYPE, redis_ip, redis_port, redis_pass, secret, vhost, app, stream, schema
 from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
@@ -122,7 +122,7 @@ class ROSBoardNode(object):
         self.DATA_DIR = Path.home() / SAVE_DIR
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
-        # self.redis_client = redis.StrictRedis(host="127.0.0.1", port=8001, password=redis_pass, db=0, decode_responses=True)
+        # self.redis_client = redis.StrictRedis(host=redis_ip, port=redis_port, password=redis_pass, db=0, decode_responses=True)
         self.message_queue = queue.Queue(maxsize=10)
         self.message_num = 0
         # loop to keep track of message for save pcd file
@@ -130,6 +130,9 @@ class ROSBoardNode(object):
         self.ros_queue = queue.Queue(maxsize=10)
         # loop to keep track of message for ros log
         threading.Thread(target = self.saveros_loop, daemon = True).start()
+        self.task_queue = queue.Queue(maxsize=10)
+        # loop to keep track of message for ros task
+        threading.Thread(target = self.sendtask_loop, daemon = True).start()
 
         self.lock = threading.Lock()
 
@@ -351,9 +354,9 @@ class ROSBoardNode(object):
         # sync cached message to socket client
         try:
             if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                if self.has_key("/global_map"):
-                    json_msg = self.load_json("/global_map")
-                    # print("sync_topics get message: %s" % json.dumps(json_msg))
+                if self.has_key("/global/GlobalMap"):
+                    json_msg = self.load_json("/global/GlobalMap")
+                    # print("sync_message get message: %s" % json.dumps(json_msg))
                     print("sync_message for cached message len: %s" % len(json.dumps(json_msg)))
                     sock.write_message(json.dumps(json_msg))
 
@@ -361,7 +364,7 @@ class ROSBoardNode(object):
             rospy.logwarn(str(e))
             traceback.print_exc()
 
-    def sync_topics(self, sock):
+    def sync_topics(self, msg: json):
         try:
             # all topics and their types as strings e.g. {"/foo": "std_msgs/String", "/bar": "std_msgs/Int32"}
             self.all_topics = {}
@@ -373,23 +376,47 @@ class ROSBoardNode(object):
                     topic_type = topic_type[0] # ROS2
                 self.all_topics[topic_name] = topic_type
 
-            if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                json_msg = json.dumps([ROSBoardSocketHandler.MSG_TOPICS, self.all_topics ], separators=(',', ':'))
-                print("sync_topics message: %s" % json_msg)
-                sock.write_message(json_msg)
-            else:
-                print("sync_topics socket is closed.")
+            sid = msg.pop("_sid", None)
+            json_ok = [ROSBoardSocketHandler.MSG_TOPICS, self.all_topics]
+            print("sync_topics for json_ok: %s" % json.dumps(json_ok))
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
 
         except Exception as e:
             rospy.logwarn(str(e))
             traceback.print_exc()
 
-    def sync_tasks(self, sock: socket, msg: json):
+    def sendtask_loop(self):
+        """
+        Send task for queue. Intended to be run in a thread.
+        """
+        while True:
+            try:
+                # 从队列获取消息（阻塞等待，直到有消息或超时）
+                message = self.task_queue.get()
+
+                # 处理消息
+                if message is None:
+                    continue
+                msg = message.pop("_msg", None)
+                if msg == ROSBoardSocketHandler.MSG_TASK:
+                    self.sync_tasks(message)
+                else:
+                    print("sendtask_loop message is not processed: %s" % msg)
+
+                # 标记任务完成
+                self.task_queue.task_done()
+
+            except Exception as e:
+                rospy.logwarn(str(e))
+                traceback.print_exc()
+
+    def sync_tasks(self, msg: json):
         # send task data to ros
-        if msg is None or sock is None:
+        if msg is None:
             print("sync_tasks msg is None.")
             return
         try:
+            sid = msg.pop("_sid", None)
             topic_name = msg.pop("_topic_name", None)
             topic_type = msg.pop("_topic_type", None)
             # print("process_tasks: task msg: %s" % msg)
@@ -419,9 +446,8 @@ class ROSBoardNode(object):
                         "_topic_type": topic_type,
                         "message": "task data send successfully",
                    }]
-                print("sync_tasks task_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
+                # print("sync_tasks task_data ok: %s" % json_ok)
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             elif topic_type == "geometry_msgs/PoseStamped" and not rospy.is_shutdown():
                 stime = rospy.Time.now()
                 stime.secs = msg['header']['stamp']['secs']
@@ -441,21 +467,18 @@ class ROSBoardNode(object):
                         "_topic_type": topic_type,
                         "message": "task data send successfully",
                    }]
-                print("sync_tasks task_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
+                # print("sync_tasks task_data ok: %s" % json_ok)
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             else:
-                print("process_tasks task_data error for rosmsg is none.")
                 json_err = [ROSBoardSocketHandler.MSG_TASK,
                     {
                         "code": -1,
                         "_topic_name": topic_name,
                         "_topic_type": topic_type,
-                        "message": "task data send successfully",
+                        "message": "task data send error for topic type not support.",
                    }]
                 print("sync_tasks task_data err: %s" % json_err)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_err))
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
         except Exception as e:
             rospy.logwarn(str(e))
@@ -552,12 +575,12 @@ class ROSBoardNode(object):
             ROSBoardSocketHandler.broadcast,
             [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
         )
-        if topic_name == "/global_map":
+        if topic_name == "/global/GlobalMap":
             # store it to the redis cache as well
             json_msg = [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
             # print("sync_topics set message: %s" % json_msg)
             self.cache_json(topic_name, json_msg)
-        elif topic_name == "/grid_map2D":
+        elif topic_name == "/global/GridMap":
             # store it to the redis cache as well
             if (self.message_num < 1):
                 self.message_num += 1
@@ -623,9 +646,11 @@ class ROSBoardNode(object):
                     self.sync_pgm(message)
                 elif msg == ROSBoardSocketHandler.MSG_DEVICE:
                     self.sync_device(message)
-                elif message.get("_topic_name", "") == "/global_map":
+                elif msg == ROSBoardSocketHandler.MSG_TOPICS:
+                    self.sync_topics(message)
+                elif message.get("_topic_name", "") == "/global/GlobalMap":
                     self.process_message(message)
-                elif message.get("_topic_name", "") == "/grid_map2D":
+                elif message.get("_topic_name", "") == "/global/GridMap":
                     self.save_map(message)
                 else:
                     print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
