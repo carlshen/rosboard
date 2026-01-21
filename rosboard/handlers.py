@@ -221,7 +221,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             topic_data = argv[1]
             topic_data["_msg"] = ROSBoardSocketHandler.MSG_TOPICS
             topic_data["_sid"] = self.id
-            if self.node.message_queue.qsize() > 9:
+            if self.node.message_queue.full():
                 json_err = [ROSBoardSocketHandler.MSG_TOPICS,
                     {
                         "code": -100,
@@ -236,13 +236,8 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             # send list of current tasks
             # print("message: task: %s" % message)
             task_data = argv[1]
-            if task_data is not None and (self.node.task_queue.qsize() < 5):
-                task_data["_msg"] = ROSBoardSocketHandler.MSG_TASK
-                task_data["_sid"] = self.id
-                self.node.task_queue.put(task_data)
-            else:
-                json_err = [
-                    ROSBoardSocketHandler.MSG_TASK,
+            if task_data is None or self.node.task_queue.full():
+                json_err = [ROSBoardSocketHandler.MSG_TASK,
                     {
                         "code": -100,
                         "message": "Task sends too many, please low down.",
@@ -250,31 +245,33 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 print("message: task_data: %s" % json_err)
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
+            else:
+                task_data["_msg"] = ROSBoardSocketHandler.MSG_TASK
+                task_data["_sid"] = self.id
+                self.node.task_queue.put(task_data)
         elif argv[0] == ROSBoardSocketHandler.MSG_DEVICE:
             # send message of current device
             # print("message: device: %s" % message)
             device_data = argv[1]
-            if device_data is not None and (self.node.message_queue.qsize() < 10):
-                device_data["_msg"] = ROSBoardSocketHandler.MSG_DEVICE
-                device_data["_sid"] = self.id
-                self.node.message_queue.put(device_data)
-                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
-            else:
-                device_data["code"] = -100
-                device_data["message"] = "Device query is too many, please low down."
-                json_err = [
-                    ROSBoardSocketHandler.MSG_DEVICE,
-                    device_data]
+            if device_data is None or self.node.message_queue.full():
+                json_err = [ROSBoardSocketHandler.MSG_DEVICE,
+                    {
+                        "code": -100,
+                        "message": "Device query is too many, please low down.",
+                    }]
                 print("message: device_data: %s" % json_err)
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
+            else:
+                device_data["_msg"] = ROSBoardSocketHandler.MSG_DEVICE
+                device_data["_sid"] = self.id
+                self.node.message_queue.put(device_data)
         elif argv[0] == ROSBoardSocketHandler.MSG_PCD:
             # save to file and insert into DB
             # print("message: file: %s" % message)
             point_cloud_data = argv[1]
-            if point_cloud_data is None or (self.node.message_queue.qsize() > 9):
-                json_err = [
-                    ROSBoardSocketHandler.MSG_PCD,
+            if point_cloud_data is None or self.node.message_queue.full():
+                json_err = [ROSBoardSocketHandler.MSG_PCD,
                     {
                         "code": -100,
                         "message": "Pcd query is too many, please low down.",
@@ -288,7 +285,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 point_cloud_data["_msg"] = ROSBoardSocketHandler.MSG_PCD
                 point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
-                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
             else:
                 # print("message: point_cloud_data len: %s" % len(json.dumps(point_cloud_data)))
                 file_path = self.node.generate_filename()
@@ -296,14 +292,12 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 # print("message: point_cloud_data file_path: %s" % file_path)
                 point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
-                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
         elif argv[0] == ROSBoardSocketHandler.MSG_PGM:
             # save to file and insert into DB
             # print("message: file: %s" % message)
             point_cloud_map = argv[1]
-            if point_cloud_map is None or (self.node.message_queue.qsize() > 9):
-                json_err = [
-                    ROSBoardSocketHandler.MSG_PGM,
+            if point_cloud_map is None or self.node.message_queue.full():
+                json_err = [ROSBoardSocketHandler.MSG_PGM,
                     {
                         "code": -100,
                         "message": "Pgm query is too many, please low down.",
@@ -317,7 +311,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 point_cloud_map["_msg"] = ROSBoardSocketHandler.MSG_PGM
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
-                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
             else:
                 # print("message: point_cloud_map len: %s" % len(json.dumps(point_cloud_map)))
                 file_path = self.node.map_filename()
@@ -325,14 +318,12 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 # print("message: point_cloud_map file_path: %s" % file_path)
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
-                print("message_queue: qsize: %s" % self.node.message_queue.qsize())
         elif argv[0] == ROSBoardSocketHandler.MSG_LOG:
             # query DB for the log
             log_msg = argv[1]
             # print("log_msg: %s" % log_msg)
-            if (log_msg is None) or (log_msg.get("_topic_name") is None):
-                json_err = [
-                    ROSBoardSocketHandler.MSG_LOG,
+            if (log_msg is None) or (log_msg.get("_topic_name") is None) or self.node.ros_queue.full():
+                json_err = [ROSBoardSocketHandler.MSG_LOG,
                     {
                         "code": -100,
                         "message": "message data format error"
@@ -344,7 +335,6 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 log_msg["_msg"] = ROSBoardSocketHandler.MSG_LOG
                 log_msg["_sid"] = self.id
                 self.node.ros_queue.put(log_msg)
-                print("ros_queue: qsize: %s" % self.node.ros_queue.qsize())
 
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";

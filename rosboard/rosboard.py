@@ -130,7 +130,7 @@ class ROSBoardNode(object):
         self.ros_queue = queue.Queue(maxsize=10)
         # loop to keep track of message for ros log
         threading.Thread(target = self.saveros_loop, daemon = True).start()
-        self.task_queue = queue.Queue(maxsize=10)
+        self.task_queue = queue.Queue(maxsize=5)
         # loop to keep track of message for ros task
         threading.Thread(target = self.sendtask_loop, daemon = True).start()
 
@@ -238,7 +238,7 @@ class ROSBoardNode(object):
         Periodically calls self.sync_subs(). Intended to be run in a thread.
         """
         while True:
-            time.sleep(2)
+            time.sleep(3)
             self.sync_subs()
 
     def sync_subs(self):
@@ -588,8 +588,10 @@ class ROSBoardNode(object):
         elif topic_name == "/show_info":
             # store it to the db for the log
             # print("log ros_msg_dict: %s" % json.dumps(ros_msg_dict))
-            self.ros_queue.put(ros_msg_dict)
-            print("ros_queue: qsize: %s" % self.ros_queue.qsize())
+            if self.node.ros_queue.full():
+                print("ros_queue is full, qsize: %s" % self.ros_queue.qsize())
+            else:
+                self.ros_queue.put(ros_msg_dict)
 
     def cache_json(self, key: str, data: Any, expire_seconds: Optional[int] = None) -> None:
         """将任意可 JSON 序列化的数据写入 Redis 指定 key，可选过期时间（秒）"""
