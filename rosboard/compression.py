@@ -223,8 +223,7 @@ def compress_occupancy_grid(msg, output):
         output["_error"] = str(e)
     try:
         img_jpeg = encode_jpeg(cv2_img)
-        # output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
-        output["_data_jpeg"] = img_jpeg
+        output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
     except OSError as e:
         output["_error"] = str(e)
 

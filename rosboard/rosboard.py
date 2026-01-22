@@ -238,7 +238,7 @@ class ROSBoardNode(object):
         Periodically calls self.sync_subs(). Intended to be run in a thread.
         """
         while True:
-            time.sleep(3)
+            time.sleep(2)
             self.sync_subs()
 
     def sync_subs(self):
@@ -354,8 +354,8 @@ class ROSBoardNode(object):
         # sync cached message to socket client
         try:
             if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                if self.has_key("/global/GlobalMap"):
-                    json_msg = self.load_json("/global/GlobalMap")
+                if self.has_key("sensor_msgs/PointCloud2"):
+                    json_msg = self.load_json("sensor_msgs/PointCloud2")
                     # print("sync_message get message: %s" % json.dumps(json_msg))
                     print("sync_message for cached message len: %s" % len(json.dumps(json_msg)))
                     sock.write_message(json.dumps(json_msg))
@@ -558,8 +558,11 @@ class ROSBoardNode(object):
             return
 
         # convert ROS message into a dict and get it ready for serialization
-        #ros_msg_dict = ros2dict(msg)
-        ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
+        ros_msg_dict = None
+        if topic_type == "nav_msgs/OccupancyGrid":
+            ros_msg_dict = ros2dict(msg)
+        else:
+            ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
 
         # add metadata
         ros_msg_dict["_topic_name"] = topic_name
@@ -575,16 +578,14 @@ class ROSBoardNode(object):
             ROSBoardSocketHandler.broadcast,
             [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
         )
-        if topic_name == "/global/GlobalMap":
+        if topic_type == "sensor_msgs/PointCloud2":
             # store it to the redis cache as well
             json_msg = [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
             # print("sync_topics set message: %s" % json_msg)
-            self.cache_json(topic_name, json_msg)
-        elif topic_name == "/global/GridMap":
+            self.cache_json(topic_type, json_msg)
+        elif topic_type == "nav_msgs/OccupancyGrid":
             # store it to the redis cache as well
-            if (self.message_num < 1):
-                self.message_num += 1
-                print("cache_json message num: %s" % self.message_num)
+            self.cache_json(topic_type, ros_msg_dict)
         elif topic_name == "/show_info":
             # store it to the db for the log
             # print("log ros_msg_dict: %s" % json.dumps(ros_msg_dict))
@@ -650,9 +651,9 @@ class ROSBoardNode(object):
                     self.sync_device(message)
                 elif msg == ROSBoardSocketHandler.MSG_TOPICS:
                     self.sync_topics(message)
-                elif message.get("_topic_name", "") == "/global/GlobalMap":
+                elif msg == ROSBoardSocketHandler.MSG_PCD_S:
                     self.process_message(message)
-                elif message.get("_topic_name", "") == "/global/GridMap":
+                elif msg == ROSBoardSocketHandler.MSG_PGM_S:
                     self.save_map(message)
                 else:
                     print("savefile_loop topic is not processed: %s" % message.get("_topic_name", ""))
@@ -680,10 +681,7 @@ class ROSBoardNode(object):
         msg.pop("_topic_type", None)
         msg.pop("_time", None)
         sid = msg.pop("_sid", None)
-        file_path = msg.pop("_file_path", None)
-        if file_path is None:
-            print("process_message file_path is None, need generate.")
-            file_path = self.generate_filename()
+        file_path = self.generate_filename()
         ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
         # transfer to PointCloud from ROS PointCloud2 message
         pc = PointCloud.from_msg(ros_msg)
@@ -1175,8 +1173,8 @@ class ROSBoardNode(object):
                         jpd["id"] = pm.id
                         jpd["name"] = pm.name
                         jpd["path"] = pm.path
-                        jpd["yaml_path"] = pm.path.replace(".pgm", ".yaml")
-                        jpd["jpeg_path"] = pm.path.replace(".pgm", ".jpeg")
+                        # jpd["yaml_path"] = pm.path.replace(".pgm", ".yaml")
+                        # jpd["jpeg_path"] = pm.path.replace(".pgm", ".jpeg")
                         jpd["type"] = pm.type
                         json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1201,8 +1199,8 @@ class ROSBoardNode(object):
                             jpd["id"] = pd["id"]
                             jpd["name"] = pd["name"]
                             jpd["path"] = pd["path"]
-                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
-                            jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
+                            # jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            # jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1225,8 +1223,8 @@ class ROSBoardNode(object):
                             jpd["id"] = pd["id"]
                             jpd["name"] = pd["name"]
                             jpd["path"] = pd["path"]
-                            jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
-                            jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
+                            # jpd["yaml_path"] = pd["path"].replace(".pgm", ".yaml")
+                            # jpd["jpeg_path"] = pd["path"].replace(".pgm", ".jpeg")
                             jpd["type"] = pd["type"]
                             json_list.append(jpd)
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
@@ -1319,17 +1317,22 @@ class ROSBoardNode(object):
         msg.pop("_topic_type", None)
         msg.pop("_time", None)
         sid = msg.pop("_sid", None)
-        base = msg.pop("_file_path", None)
-        if base is None:
-            print("save_map file_path is None, need generate.")
-            base = self.map_filename()
+        base = self.map_filename()
         pgm_path = base.__str__() + ".pgm"
         yaml_path = base.__str__() + ".yaml"
         jpeg_path = base.__str__() + ".jpeg"
-        ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', msg)
+        ros_msg = None
+        if "header" in msg and "info" in msg and "_data_jpeg" in msg:
+            ros_msg = msg
+        else:
+            ros_msg = self.load_json("nav_msgs/OccupancyGrid")
+            ros_msg.pop("_topic_name")
+            ros_msg.pop("_topic_type")
+            ros_msg.pop("_time")
+        # ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', cache_msg)
         # Save image (simple PGM) and YAML metadata compatible with yaml_server
-        self.save_pgm(ros_msg, pgm_path)
-        self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
+        # self.save_pgm(ros_msg, pgm_path)
+        # self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
         self.save_jpeg(ros_msg, jpeg_path)
         # save to db for map files
         if os.path.exists(pgm_path):
@@ -1344,8 +1347,6 @@ class ROSBoardNode(object):
             saveFile.updater = "ros"
             saveFile.deleted = 0
             saveFile.save()
-        else:
-            print("save_map: save pgm_path error: %s" % yaml_path)
         if os.path.exists(yaml_path):
             print("save_map: save yaml_path ok, save to db: %s" % yaml_path)
             saveFile = InfraFile.create()
@@ -1358,22 +1359,18 @@ class ROSBoardNode(object):
             saveFile.updater = "ros"
             saveFile.deleted = 0
             saveFile.save()
-        else:
-            print("save_map: save yaml_path error: %s" % yaml_path)
         if os.path.exists(jpeg_path):
             print("save_map: save jpeg_path ok, save to db: %s" % jpeg_path)
             saveFile = InfraFile.create()
             saveFile.name = Path(jpeg_path).name
             saveFile.path = jpeg_path
             saveFile.url = ""
-            saveFile.type = "jpeg"
+            saveFile.type = "pgm"
             saveFile.size = os.path.getsize(jpeg_path)
             saveFile.creator = "ros"
             saveFile.updater = "ros"
             saveFile.deleted = 0
             saveFile.save()
-        else:
-            print("save_map: save jpeg_path error: %s" % jpeg_path)
         if os.path.exists(pgm_path) and os.path.exists(yaml_path) and os.path.exists(jpeg_path):
             json_ok = [ROSBoardSocketHandler.MSG_PGM,
                 {
@@ -1384,12 +1381,12 @@ class ROSBoardNode(object):
                     "jpeg_path": jpeg_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-        elif os.path.exists(pgm_path):
+        elif os.path.exists(jpeg_path):
             json_ok = [ROSBoardSocketHandler.MSG_PGM,
                 {
                     "code": 0,
                     "message": "Point cloud map saved successfully",
-                    "path": pgm_path,
+                    "path": jpeg_path,
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
         else:
@@ -1433,7 +1430,10 @@ class ROSBoardNode(object):
 
     def save_jpeg(self, msg: OccupancyGrid, jpeg_path: str):
         output = {}
-        compress_occupancy_grid(msg, output)
+        # compress_occupancy_grid(msg, output)
+        data = msg.get("_data_jpeg", None)
+        if data is not None and len(data) > 0:
+            output["_data_jpeg"] = base64.b64decode(data)
         if output.get("_data_jpeg", None) is not None:
             with open(jpeg_path, "wb") as f:
                 f.write(output["_data_jpeg"])

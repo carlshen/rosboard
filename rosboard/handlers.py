@@ -93,7 +93,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
         try:
             if message[0] == ROSBoardSocketHandler.MSG_TOPICS:
                 json_msg = json.dumps(message, separators=(',', ':'))
-                print("topics message: %s" % json_msg)
+                # print("topics message: %s" % json_msg)
                 for socket in cls.sockets:
                     if socket.ws_connection and not socket.ws_connection.is_closing():
                         socket.write_message(json_msg)
@@ -286,10 +286,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
             else:
-                # print("message: point_cloud_data len: %s" % len(json.dumps(point_cloud_data)))
-                file_path = self.node.generate_filename()
-                point_cloud_data["_file_path"] = file_path
-                # print("message: point_cloud_data file_path: %s" % file_path)
+                point_cloud_data["_msg"] = ROSBoardSocketHandler.MSG_PCD_S
                 point_cloud_data["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_data)
         elif argv[0] == ROSBoardSocketHandler.MSG_PGM:
@@ -312,10 +309,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
             else:
-                # print("message: point_cloud_map len: %s" % len(json.dumps(point_cloud_map)))
-                file_path = self.node.map_filename()
-                point_cloud_map["_file_path"] = file_path
-                # print("message: point_cloud_map file_path: %s" % file_path)
+                point_cloud_map["_msg"] = ROSBoardSocketHandler.MSG_PGM_S
                 point_cloud_map["_sid"] = self.id
                 self.node.message_queue.put(point_cloud_map)
         elif argv[0] == ROSBoardSocketHandler.MSG_LOG:
@@ -345,6 +339,8 @@ ROSBoardSocketHandler.MSG_SYSTEM = "sys";
 ROSBoardSocketHandler.MSG_UNSUB = "unsub";
 ROSBoardSocketHandler.MSG_PCD = "pcd";
 ROSBoardSocketHandler.MSG_PGM = "pgm";
+ROSBoardSocketHandler.MSG_PCD_S = "pcd_s";
+ROSBoardSocketHandler.MSG_PGM_S = "pgm_s";
 ROSBoardSocketHandler.MSG_TASK = "task";
 ROSBoardSocketHandler.MSG_DEVICE = "device";
 ROSBoardSocketHandler.MSG_LOG = "log";
