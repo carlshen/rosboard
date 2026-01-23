@@ -130,9 +130,6 @@ class ROSBoardNode(object):
         self.ros_queue = queue.Queue(maxsize=10)
         # loop to keep track of message for ros log
         threading.Thread(target = self.saveros_loop, daemon = True).start()
-        self.task_queue = queue.Queue(maxsize=5)
-        # loop to keep track of message for ros task
-        threading.Thread(target = self.sendtask_loop, daemon = True).start()
 
         self.lock = threading.Lock()
 
@@ -385,38 +382,12 @@ class ROSBoardNode(object):
             rospy.logwarn(str(e))
             traceback.print_exc()
 
-    def sendtask_loop(self):
-        """
-        Send task for queue. Intended to be run in a thread.
-        """
-        while True:
-            try:
-                # 从队列获取消息（阻塞等待，直到有消息或超时）
-                message = self.task_queue.get()
-
-                # 处理消息
-                if message is None:
-                    continue
-                msg = message.pop("_msg", None)
-                if msg == ROSBoardSocketHandler.MSG_TASK:
-                    self.sync_tasks(message)
-                else:
-                    print("sendtask_loop message is not processed: %s" % msg)
-
-                # 标记任务完成
-                self.task_queue.task_done()
-
-            except Exception as e:
-                rospy.logwarn(str(e))
-                traceback.print_exc()
-
-    def sync_tasks(self, msg: json):
+    def sync_tasks(self, sock: socket, msg: json):
         # send task data to ros
         if msg is None:
             print("sync_tasks msg is None.")
             return
         try:
-            sid = msg.pop("_sid", None)
             topic_name = msg.pop("_topic_name", None)
             topic_type = msg.pop("_topic_type", None)
             # print("process_tasks: task msg: %s" % msg)
@@ -447,7 +418,8 @@ class ROSBoardNode(object):
                         "message": "task data send successfully",
                    }]
                 # print("sync_tasks task_data ok: %s" % json_ok)
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
             elif topic_type == "geometry_msgs/PoseStamped" and not rospy.is_shutdown():
                 stime = rospy.Time.now()
                 stime.secs = msg['header']['stamp']['secs']
@@ -468,7 +440,8 @@ class ROSBoardNode(object):
                         "message": "task data send successfully",
                    }]
                 # print("sync_tasks task_data ok: %s" % json_ok)
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_ok))
             else:
                 json_err = [ROSBoardSocketHandler.MSG_TASK,
                     {
@@ -478,7 +451,8 @@ class ROSBoardNode(object):
                         "message": "task data send error for topic type not support.",
                    }]
                 print("sync_tasks task_data err: %s" % json_err)
-                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
+                    sock.write_message(json.dumps(json_err))
 
         except Exception as e:
             rospy.logwarn(str(e))
@@ -715,6 +689,135 @@ class ROSBoardNode(object):
                     "path": "",
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+    def save_map(self, msg: json):
+        if msg is None:
+            print("save_map msg is None.")
+            return
+        msg.pop("_topic_name", None)
+        msg.pop("_topic_type", None)
+        msg.pop("_time", None)
+        sid = msg.pop("_sid", None)
+        base = self.map_filename()
+        pgm_path = base.__str__() + ".pgm"
+        yaml_path = base.__str__() + ".yaml"
+        jpeg_path = base.__str__() + ".jpeg"
+        ros_msg = None
+        if "header" in msg and "info" in msg and "_data_jpeg" in msg:
+            ros_msg = msg
+        else:
+            ros_msg = self.load_json("nav_msgs/OccupancyGrid")
+            ros_msg.pop("_topic_name")
+            ros_msg.pop("_topic_type")
+            ros_msg.pop("_time")
+        # ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', cache_msg)
+        # Save image (simple PGM) and YAML metadata compatible with yaml_server
+        # self.save_pgm(ros_msg, pgm_path)
+        # self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
+        self.save_jpeg(ros_msg, jpeg_path)
+        # save to db for map files
+        if os.path.exists(pgm_path):
+            print("save_map: save pgm_path ok, save to db: %s" % pgm_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(pgm_path).name
+            saveFile.path = pgm_path
+            saveFile.url = ""
+            saveFile.type = "pgm"
+            saveFile.size = os.path.getsize(pgm_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        if os.path.exists(yaml_path):
+            print("save_map: save yaml_path ok, save to db: %s" % yaml_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(yaml_path).name
+            saveFile.path = yaml_path
+            saveFile.url = ""
+            saveFile.type = "yaml"
+            saveFile.size = os.path.getsize(yaml_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        if os.path.exists(jpeg_path):
+            print("save_map: save jpeg_path ok, save to db: %s" % jpeg_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(jpeg_path).name
+            saveFile.path = jpeg_path
+            saveFile.url = ""
+            saveFile.type = "pgm"
+            saveFile.size = os.path.getsize(jpeg_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+        if os.path.exists(pgm_path) and os.path.exists(yaml_path) and os.path.exists(jpeg_path):
+            json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": 0,
+                    "message": "Point cloud map saved successfully",
+                    "path": pgm_path,
+                    "yaml_path": yaml_path,
+                    "jpeg_path": jpeg_path,
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        elif os.path.exists(jpeg_path):
+            json_ok = [ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": 0,
+                    "message": "Point cloud map saved successfully",
+                    "path": jpeg_path,
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        else:
+            json_err = [
+                ROSBoardSocketHandler.MSG_PGM,
+                {
+                    "code": -1,
+                    "message": "point cloud map saved error",
+                    "path": "",
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+    def save_pgm(self, msg: OccupancyGrid, path: str):
+        width, height = msg.info.width, msg.info.height
+        data = msg.data  # list[int] length w*h
+        with open(path, "wb") as f:
+            f.write(f"P5\n{width} {height}\n255\n".encode())
+            for v in data:
+                # Convert occupancy to grayscale: unknown=205, occupied=0, free=254
+                if v == -1:
+                    g = 205
+                elif v >= 50:
+                    g = 0
+                else:
+                    g = 254
+                f.write(bytes([g]))
+
+    def save_yaml(self, msg: OccupancyGrid, yaml_path: str, pgm_name: str):
+        info: MapMetaData = msg.info
+        origin = info.origin.position
+        data = {
+            "image": pgm_name,
+            "resolution": info.resolution,
+            "origin": [origin.x, origin.y, 0.0],
+            "negate": 0,
+            "occupied_thresh": 0.65,
+            "free_thresh": 0.196,
+        }
+        with open(yaml_path, "w") as f:
+            yaml.dump(data, f)
+
+    def save_jpeg(self, msg: OccupancyGrid, jpeg_path: str):
+        output = {}
+        # compress_occupancy_grid(msg, output)
+        data = msg.get("_data_jpeg", None)
+        if data is not None and len(data) > 0:
+            output["_data_jpeg"] = base64.b64decode(data)
+        if output.get("_data_jpeg", None) is not None:
+            with open(jpeg_path, "wb") as f:
+                f.write(output["_data_jpeg"])
 
     def sync_device(self, msg: json):
         # save device data to server
@@ -1246,18 +1349,18 @@ class ROSBoardNode(object):
                             if os.path.isfile(delP.path):
                                 os.remove(delP.path)
                             delP.delete_instance()
-                        yaml = delP.path.replace(".pgm", ".yaml")
-                        dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
-                        if dYaml is not None:
-                            if os.path.isfile(yaml):
-                                os.remove(yaml)
-                            dYaml.delete_instance()
-                        jpeg = delP.path.replace(".pgm", ".jpeg")
-                        dJpeg = InfraFile.get_or_none(InfraFile.path == jpeg)
-                        if dJpeg is not None:
-                            if os.path.isfile(jpeg):
-                                os.remove(jpeg)
-                            dJpeg.delete_instance()
+                        # yaml = delP.path.replace(".pgm", ".yaml")
+                        # dYaml = InfraFile.get_or_none(InfraFile.path == yaml)
+                        # if dYaml is not None:
+                        #     if os.path.isfile(yaml):
+                        #         os.remove(yaml)
+                        #     dYaml.delete_instance()
+                        # jpeg = delP.path.replace(".pgm", ".jpeg")
+                        # dJpeg = InfraFile.get_or_none(InfraFile.path == jpeg)
+                        # if dJpeg is not None:
+                        #     if os.path.isfile(jpeg):
+                        #         os.remove(jpeg)
+                        #     dJpeg.delete_instance()
                     json_ok = [ROSBoardSocketHandler.MSG_PGM,
                         {
                         "code": 0,
@@ -1308,135 +1411,6 @@ class ROSBoardNode(object):
         except Exception as e:
             rospy.logwarn(str(e))
             traceback.print_exc()
-
-    def save_map(self, msg: json):
-        if msg is None:
-            print("save_map msg is None.")
-            return
-        msg.pop("_topic_name", None)
-        msg.pop("_topic_type", None)
-        msg.pop("_time", None)
-        sid = msg.pop("_sid", None)
-        base = self.map_filename()
-        pgm_path = base.__str__() + ".pgm"
-        yaml_path = base.__str__() + ".yaml"
-        jpeg_path = base.__str__() + ".jpeg"
-        ros_msg = None
-        if "header" in msg and "info" in msg and "_data_jpeg" in msg:
-            ros_msg = msg
-        else:
-            ros_msg = self.load_json("nav_msgs/OccupancyGrid")
-            ros_msg.pop("_topic_name")
-            ros_msg.pop("_topic_type")
-            ros_msg.pop("_time")
-        # ros_msg = message_converter.convert_dictionary_to_ros_message('nav_msgs/OccupancyGrid', cache_msg)
-        # Save image (simple PGM) and YAML metadata compatible with yaml_server
-        # self.save_pgm(ros_msg, pgm_path)
-        # self.save_yaml(ros_msg, yaml_path, os.path.basename(pgm_path))
-        self.save_jpeg(ros_msg, jpeg_path)
-        # save to db for map files
-        if os.path.exists(pgm_path):
-            print("save_map: save pgm_path ok, save to db: %s" % pgm_path)
-            saveFile = InfraFile.create()
-            saveFile.name = Path(pgm_path).name
-            saveFile.path = pgm_path
-            saveFile.url = ""
-            saveFile.type = "pgm"
-            saveFile.size = os.path.getsize(pgm_path)
-            saveFile.creator = "ros"
-            saveFile.updater = "ros"
-            saveFile.deleted = 0
-            saveFile.save()
-        if os.path.exists(yaml_path):
-            print("save_map: save yaml_path ok, save to db: %s" % yaml_path)
-            saveFile = InfraFile.create()
-            saveFile.name = Path(yaml_path).name
-            saveFile.path = yaml_path
-            saveFile.url = ""
-            saveFile.type = "yaml"
-            saveFile.size = os.path.getsize(yaml_path)
-            saveFile.creator = "ros"
-            saveFile.updater = "ros"
-            saveFile.deleted = 0
-            saveFile.save()
-        if os.path.exists(jpeg_path):
-            print("save_map: save jpeg_path ok, save to db: %s" % jpeg_path)
-            saveFile = InfraFile.create()
-            saveFile.name = Path(jpeg_path).name
-            saveFile.path = jpeg_path
-            saveFile.url = ""
-            saveFile.type = "pgm"
-            saveFile.size = os.path.getsize(jpeg_path)
-            saveFile.creator = "ros"
-            saveFile.updater = "ros"
-            saveFile.deleted = 0
-            saveFile.save()
-        if os.path.exists(pgm_path) and os.path.exists(yaml_path) and os.path.exists(jpeg_path):
-            json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                {
-                    "code": 0,
-                    "message": "Point cloud map saved successfully",
-                    "path": pgm_path,
-                    "yaml_path": yaml_path,
-                    "jpeg_path": jpeg_path,
-                }]
-            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-        elif os.path.exists(jpeg_path):
-            json_ok = [ROSBoardSocketHandler.MSG_PGM,
-                {
-                    "code": 0,
-                    "message": "Point cloud map saved successfully",
-                    "path": jpeg_path,
-                }]
-            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
-        else:
-            json_err = [
-                ROSBoardSocketHandler.MSG_PGM,
-                {
-                    "code": -1,
-                    "message": "point cloud map saved error",
-                    "path": "",
-                }]
-            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
-
-    def save_pgm(self, msg: OccupancyGrid, path: str):
-        width, height = msg.info.width, msg.info.height
-        data = msg.data  # list[int] length w*h
-        with open(path, "wb") as f:
-            f.write(f"P5\n{width} {height}\n255\n".encode())
-            for v in data:
-                # Convert occupancy to grayscale: unknown=205, occupied=0, free=254
-                if v == -1:
-                    g = 205
-                elif v >= 50:
-                    g = 0
-                else:
-                    g = 254
-                f.write(bytes([g]))
-
-    def save_yaml(self, msg: OccupancyGrid, yaml_path: str, pgm_name: str):
-        info: MapMetaData = msg.info
-        origin = info.origin.position
-        data = {
-            "image": pgm_name,
-            "resolution": info.resolution,
-            "origin": [origin.x, origin.y, 0.0],
-            "negate": 0,
-            "occupied_thresh": 0.65,
-            "free_thresh": 0.196,
-        }
-        with open(yaml_path, "w") as f:
-            yaml.dump(data, f)
-
-    def save_jpeg(self, msg: OccupancyGrid, jpeg_path: str):
-        output = {}
-        # compress_occupancy_grid(msg, output)
-        data = msg.get("_data_jpeg", None)
-        if data is not None and len(data) > 0:
-            output["_data_jpeg"] = base64.b64decode(data)
-        if output.get("_data_jpeg", None) is not None:
-            with open(jpeg_path, "wb") as f:
-                f.write(output["_data_jpeg"])
 
     def saveros_loop(self):
         """
