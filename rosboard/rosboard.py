@@ -42,7 +42,7 @@ from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE, redis_ip, redis_port, redis_pass, secret, vhost, app, stream, schema
-from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url
+from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url, Cloud_Compress
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from nav_msgs.msg import Path as PPath
@@ -535,6 +535,14 @@ class ROSBoardNode(object):
         ros_msg_dict = None
         if topic_type == "nav_msgs/OccupancyGrid":
             ros_msg_dict = ros2dict(msg)
+        elif topic_type == "sensor_msgs/PointCloud2" and Cloud_Compress:
+            begin = time.time()
+            ros_msg_dict = ros2dict(msg)
+            if ros_msg_dict.get("_warn", None) is not None:
+                elapsed = time.time() - begin
+                rospy.loginfo("PointCloud2 compress elapsed: %s ms" % (elapsed * 1000))
+            else:
+                ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
         else:
             ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
 
