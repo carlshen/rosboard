@@ -19,6 +19,8 @@ import traceback
 from playhouse.shortcuts import model_to_dict
 from ping3 import ping
 import base64
+import struct
+import numpy as np
 import requests
 
 if os.environ.get("ROS_VERSION") == "1":
@@ -664,7 +666,15 @@ class ROSBoardNode(object):
         msg.pop("_time", None)
         sid = msg.pop("_sid", None)
         file_path = self.generate_filename()
-        ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
+        ros_msg = None
+        dataUint16 = msg.pop("_data_uint16", None)
+        if dataUint16 is None:
+            ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
+        else:
+            msg.pop("__comp", None)
+            msg.pop("_warn", None)
+            ros_msg = message_converter.convert_dictionary_to_ros_message('sensor_msgs/PointCloud2', msg)
+            ros_msg.data = self.decode_compressed(dataUint16)
         # transfer to PointCloud from ROS PointCloud2 message
         pc = PointCloud.from_msg(ros_msg)
         pc.save(file_path)
@@ -697,6 +707,48 @@ class ROSBoardNode(object):
                     "path": "",
                 }]
             self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+    def decode_compressed(self, data_uint16: json):
+        """Decode compressed point cloud data.
+        Args:
+            data_uint16: with attribute containing:
+            - bounds: List of 6 floats [xmin, xmax, ymin, ymax, zmin, zmax]
+            - points: Base64 encoded string of uint16 compressed points
+        Returns:
+            numpy.ndarray: Float32 array of decoded points (N x 3)
+        """
+        if data_uint16 is None:
+            print("decode_compressed: data_uint16 is None.")
+            return None
+        bounds = data_uint16.get("bounds", None)
+        pointOrign = data_uint16.get("points", None)
+        if bounds is None or pointOrign is None:
+            print("decode_compressed: bounds or points is None.")
+            return []
+        points_data = base64.b64decode(pointOrign)
+        num_points = len(points_data) // 6
+        points = np.zeros((num_points, 3), dtype=np.float32)
+
+        xrange = bounds[1] - bounds[0]
+        xmin = bounds[0]
+        yrange = bounds[3] - bounds[2]
+        ymin = bounds[2]
+        zrange = bounds[5] - bounds[4]
+        zmin = bounds[4]
+
+        for i in range(num_points):
+            offset = i * 6
+            # Read uint16 values (little-endian) from bytes
+            x_uint16 = struct.unpack('<H', points_data[offset:offset+2])[0]
+            y_uint16 = struct.unpack('<H', points_data[offset+2:offset+4])[0]
+            z_uint16 = struct.unpack('<H', points_data[offset+4:offset+6])[0]
+
+            # Convert to float32 coordinates using bounds
+            points[i, 0] = (x_uint16 / 65535.0) * xrange + xmin
+            points[i, 1] = (y_uint16 / 65535.0) * yrange + ymin
+            points[i, 2] = (z_uint16 / 65535.0) * zrange + zmin
+
+        return points
 
     def save_map(self, msg: json):
         if msg is None:

@@ -269,9 +269,9 @@ def compress_point_cloud2(msg, output):
     except AssertionError as e:
         output["_error"] = "PointCloud2 error: %s" % str(e)
     
-    if points.size > 65536:
-        output["_warn"] = "Point cloud too large, randomly subsampling to 65536 points."
-        idx = np.random.randint(points.size, size=65536)
+    if points.size > 262144:
+        output["_warn"] = "Point cloud too large, randomly subsampling to 262144 points."
+        idx = np.random.randint(points.size, size=262144)
         points = points[idx]
 
     xpoints = points['x'].astype(np.float32)
