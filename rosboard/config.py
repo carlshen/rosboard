@@ -26,7 +26,7 @@ push_url="rtsp://{}:{}/live/push"
 
 # 项目调试模式配置
 debug = True
-Cloud_Compress = True
+Cloud_Compress = False
 
 # 文件类型与目录配置
 SAVE_DIR = "data"

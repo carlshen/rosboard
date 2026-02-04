@@ -537,12 +537,15 @@ class ROSBoardNode(object):
         ros_msg_dict = None
         if topic_type == "nav_msgs/OccupancyGrid":
             ros_msg_dict = ros2dict(msg)
-        elif topic_type == "sensor_msgs/PointCloud2" and Cloud_Compress:
-            begin = time.time()
-            ros_msg_dict = ros2dict(msg)
-            if ros_msg_dict.get("_warn", None) is not None:
-                elapsed = time.time() - begin
-                rospy.loginfo("PointCloud2 compress elapsed: %s ms" % (elapsed * 1000))
+        elif topic_type == "sensor_msgs/PointCloud2":
+            if Cloud_Compress:
+                begin = time.time()
+                ros_msg_dict = ros2dict(msg)
+                if ros_msg_dict.get("_warn", None) is not None:
+                    elapsed = time.time() - begin
+                    rospy.loginfo("PointCloud2 compress elapsed: %s ms" % (elapsed * 1000))
+                else:
+                    ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
             else:
                 ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
         else:
@@ -636,7 +639,10 @@ class ROSBoardNode(object):
                 elif msg == ROSBoardSocketHandler.MSG_TOPICS:
                     self.sync_topics(message)
                 elif msg == ROSBoardSocketHandler.MSG_PCD_S:
-                    self.process_message(message)
+                    if Cloud_Compress:
+                        self.process_message(message)
+                    else:
+                        self.process_cloud(message)
                 elif msg == ROSBoardSocketHandler.MSG_PGM_S:
                     self.save_map(message)
                 else:
@@ -656,6 +662,44 @@ class ROSBoardNode(object):
             except Exception as e:
                 print(f"[savefile_loop] exception: {e}")
                 traceback.print_exc()
+
+    def process_cloud(self, msg: json):
+        if msg is None:
+            print("process_cloud msg is None.")
+            return
+        sid = msg.pop("_sid", None)
+        file_path = self.generate_filename()
+        with open(file_path, "w") as f:
+            f.write(json.dumps(msg, separators=(',', ':')))
+        if file_path.is_file():
+            print("process_cloud: save file ok, save to db: %s" % file_path)
+            saveFile = InfraFile.create()
+            saveFile.name = Path(file_path).name
+            saveFile.path = file_path.__str__()
+            saveFile.url = ""
+            saveFile.type = "pcd"
+            saveFile.size = os.path.getsize(file_path)
+            saveFile.creator = "ros"
+            saveFile.updater = "ros"
+            saveFile.deleted = 0
+            saveFile.save()
+            json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": 0,
+                    "message": "Point cloud data saved successfully",
+                    "path": file_path.__str__(),
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+        else:
+            print("process_cloud: save file error: %s" % file_path)
+            json_err = [
+                ROSBoardSocketHandler.MSG_PCD,
+                {
+                    "code": -1,
+                    "message": "point cloud data save error",
+                    "path": "",
+                }]
+            self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
     def process_message(self, msg: json):
         if msg is None:
@@ -1286,16 +1330,29 @@ class ROSBoardNode(object):
                 path = msg.get("path", None)
                 if path is not None and os.path.isfile(path):
                     content = None
-                    with open(path, 'rb') as f:
-                        content = f.read()
-                    json_ok = [ROSBoardSocketHandler.MSG_PCD,
-                        {
+                    json_ok = []
+                    if Cloud_Compress:
+                        with open(path, 'rb') as f:
+                            content = f.read()
+                        json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                            {
                             "code": 0,
                             "_topic_name": topic_name,
                             "path": path,
                             "content": base64.b64encode(content).decode(),
                             "message": "pcd file get successfully",
-                        }]
+                            }]
+                    else:
+                        with open(path, 'r') as f:
+                            content = f.read()
+                        json_ok = [ROSBoardSocketHandler.MSG_PCD,
+                            {
+                            "code": 0,
+                            "_topic_name": topic_name,
+                            "path": path,
+                            "content": content,
+                            "message": "pcd file get successfully",
+                            }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
                     json_err = [ROSBoardSocketHandler.MSG_PCD,
