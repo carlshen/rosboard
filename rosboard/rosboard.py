@@ -541,11 +541,11 @@ class ROSBoardNode(object):
             if Cloud_Compress:
                 begin = time.time()
                 ros_msg_dict = ros2dict(msg)
-                if ros_msg_dict.get("_warn", None) is not None:
-                    elapsed = time.time() - begin
-                    rospy.loginfo("PointCloud2 compress elapsed: %s ms" % (elapsed * 1000))
-                else:
-                    ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
+                # if ros_msg_dict.get("_warn", None) is not None:
+                #     elapsed = time.time() - begin
+                #     rospy.loginfo("PointCloud2 compress elapsed: %s ms" % (elapsed * 1000))
+                # else:
+                #     ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
             else:
                 ros_msg_dict = message_converter.convert_ros_message_to_dictionary(msg)
         else:
