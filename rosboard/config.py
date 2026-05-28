@@ -20,9 +20,10 @@ app="live"
 stream="test"
 schema="rtsp"
 pull_port=8554
-push_port=5554
+push_port=12345
+push_ip = "127.0.0.1"
 pull_url="rtsp://{}:{}/live/back"
-push_url="rtsp://{}:{}/live/push"
+push_url="http://{}:{}/live/robot{}/hls.m3u8"
 
 # 项目调试模式配置
 debug = True

@@ -44,7 +44,7 @@ from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE, redis_ip, redis_port, redis_pass, secret, vhost, app, stream, schema
-from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, pull_url, push_url, Cloud_Compress
+from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, push_ip, pull_url, push_url, Cloud_Compress
 from rosboard.models import InfraFile, DeviceList, DeviceLog
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from nav_msgs.msg import Path as PPath
@@ -1173,7 +1173,7 @@ class ROSBoardNode(object):
                                     device.save()
                                     status = 0
                             # set push url
-                            dstUrl = push_url.format(item.get("ip"), push_port)
+                            dstUrl = push_url.format(push_ip, push_port, item.get("id"))
                             requ = "{}?secret={}&vhost={}&app={}&stream={}&schema={}&dst_url={}".format(
                                 push_add, secret, vhost, app, stream, schema, dstUrl)
                             print("message: video push url request: %s" % requ)
