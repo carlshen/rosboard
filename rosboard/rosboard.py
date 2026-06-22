@@ -444,6 +444,380 @@ class ROSBoardNode(object):
                 # print("sync_tasks task_data ok: %s" % json_ok)
                 if sock and sock.ws_connection and not sock.ws_connection.is_closing():
                     sock.write_message(json.dumps(json_ok))
+            elif topic_type == "task_info" and not rospy.is_shutdown():
+                if topic_name == "add":
+                    task_list = msg.get("_task_list", None)
+                    if task_list is not None and len(task_list) > 0:
+                        print("save_task: size: %s" % len(task_list))
+                        json_list = []
+                        for task in task_list:
+                            saveTask = TaskList.create()
+                            saveTask.task_no = task.get("task_no")
+                            saveTask.task_name = task.get("task_name")
+                            saveTask.description = task.get("description")
+                            saveTask.task_map = task.get("task_map")
+                            saveTask.task_type = task.get("task_type")
+                            saveTask.task_pri = task.get("task_pri")
+                            saveTask.task_cron = task.get("task_cron")
+                            saveTask.task_timer = task.get("task_timer")
+                            saveTask.task_recent = task.get("task_recent")
+                            saveTask.task_status = task.get("task_status")
+                            saveTask.task_rob = task.get("task_rob")
+                            saveTask.task_fail = task.get("task_fail")
+                            saveTask.task_handoff = task.get("task_handoff")
+                            saveTask.task_source = task.get("task_source")
+                            saveTask.task_prompt = task.get("task_prompt")
+                            saveTask.user_id = "ros"
+                            saveTask.creator = "ros"
+                            saveTask.updater = "ros"
+                            saveTask.save()
+                            json_list.append({"id": saveTask.id})
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task save successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task save no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "del":
+                    task_list = msg.get("_task_list", None)
+                    if task_list is not None and len(task_list) > 0:
+                        print("delete_task: size: %s" % len(task_list))
+                        json_list = []
+                        for task in task_list:
+                            delTask = TaskList.get_or_none(TaskList.id == task.get("id"))
+                            if delTask is not None:
+                                delTask.delete_instance()
+                                json_list.append({"id": delTask.id})
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task delete successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task delete no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "update":
+                    task_list = msg.get("_task_list", None)
+                    if task_list is not None and len(task_list) > 0:
+                        print("update_task: size: %s" % len(task_list))
+                        for task in task_list:
+                            saveTask = TaskList.get_or_none(TaskList.id == task.get("id"))
+                            if saveTask is None:
+                                saveTask = TaskList.create()
+                                saveTask.user_id = "ros"
+                                saveTask.creator = "ros"
+                                saveTask.updater = "ros"
+                            saveTask.task_no = task.get("task_no")
+                            saveTask.task_name = task.get("task_name")
+                            saveTask.description = task.get("description")
+                            saveTask.task_map = task.get("task_map")
+                            saveTask.task_type = task.get("task_type")
+                            saveTask.task_pri = task.get("task_pri")
+                            saveTask.task_cron = task.get("task_cron")
+                            saveTask.task_timer = task.get("task_timer")
+                            saveTask.task_recent = task.get("task_recent")
+                            saveTask.task_status = task.get("task_status")
+                            saveTask.task_rob = task.get("task_rob")
+                            saveTask.task_fail = task.get("task_fail")
+                            saveTask.task_handoff = task.get("task_handoff")
+                            saveTask.task_source = task.get("task_source")
+                            saveTask.task_prompt = task.get("task_prompt")
+                            saveTask.save()
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task update successfully",
+                            "data": task_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task update no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "query":
+                    query_type = msg.get("_query_type", None)
+                    if query_type == "list":
+                        task_list = msg.get("_task_list", None)
+                        json_list = []
+                        if task_list is not None and len(task_list) > 0:
+                            print("squery_task: size: %s" % len(task_list))
+                            for task in task_list:
+                                queryTask = TaskList.get_or_none(TaskList.id == msg.get("id"))
+                                if queryTask is not None:
+                                    json_list.append(queryTask.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "task query successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    elif topic_type == "page":
+                        page = msg.get("page", 1)
+                        size = msg.get("size", 20)
+                        task_list = TaskList.select().paginate(page, size)
+                        json_list = []
+                        if task_list is not None and len(task_list) > 0:
+                            print("query_task: size: %s" % len(task_list))
+                            for task in task_list:
+                                json_list.append(task.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                                "code": 0,
+                                "_topic_name": topic_name,
+                                "_topic_type": topic_type,
+                                "data": json_list,
+                                "message": "task query successfully",
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        task_list = TaskList.select()
+                        json_list = []
+                        if task_list is not None and len(task_list) > 0:
+                            print("query_task: size: %s" % len(task_list))
+                            for task in task_list:
+                                json_list.append(task.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                                "code": 0,
+                                "_topic_name": topic_name,
+                                "_topic_type": topic_type,
+                                "data": json_list,
+                                "message": "task query successfully",
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_TASK,
+                        {
+                            "code": -1,
+                            "_topic_name": topic_name,
+                            "message": "topic_name not found.",
+                            "data": []
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+            elif topic_type == "task_node" and not rospy.is_shutdown():
+                if topic_name == "add":
+                    node_list = msg.get("_node_list", None)
+                    if node_list is not None and len(node_list) > 0:
+                        print("save_node: size: %s" % len(node_list))
+                        json_list = []
+                        for node in node_list:
+                            saveNode = TaskNode.create()
+                            saveNode.task_no = node.get("task_no")
+                            saveNode.step = node.get("step")
+                            saveNode.name = node.get("name")
+                            saveNode.description = node.get("description")
+                            saveNode.action = node.get("action")
+                            saveNode.status = node.get("status")
+                            saveNode.location = node.get("location")
+                            saveNode.task_x = node.get("task_x")
+                            saveNode.task_y = node.get("task_y")
+                            saveNode.task_z = node.get("task_z")
+                            saveNode.robot = node.get("robot")
+                            saveNode.type = node.get("type")
+                            saveNode.results = node.get("results")
+                            saveNode.photo_id = node.get("photo_id")
+                            saveNode.hot_id = node.get("hot_id")
+                            saveNode.voice_id = node.get("voice_id")
+                            saveNode.depends = node.get("depends")
+                            saveNode.user_id = "ros"
+                            saveNode.creator = "ros"
+                            saveNode.updater = "ros"
+                            saveNode.save()
+                            json_list.append({"id": saveNode.id})
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node save successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node save no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "del":
+                    node_list = msg.get("_node_list", None)
+                    if node_list is not None and len(node_list) > 0:
+                        print("delete_node: size: %s" % len(node_list))
+                        json_list = []
+                        for node in node_list:
+                            delNode = TaskNode.get_or_none(TaskNode.id == node.get("id"))
+                            if delNode is not None:
+                                delNode.delete_instance()
+                                json_list.append({"id": delNode.id})
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node delete successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node delete no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "update":
+                    node_list = msg.get("_node_list", None)
+                    if node_list is not None and len(node_list) > 0:
+                        print("update_node: size: %s" % len(node_list))
+                        for node in node_list:
+                            saveNode = TaskNode.get_or_none(TaskNode.id == node.get("id"))
+                            if saveNode is None:
+                                saveNode = TaskNode.create()
+                                saveNode.user_id = "ros"
+                                saveNode.creator = "ros"
+                                saveNode.updater = "ros"
+                            saveNode.task_no = node.get("task_no")
+                            saveNode.step = node.get("step")
+                            saveNode.name = node.get("name")
+                            saveNode.description = node.get("description")
+                            saveNode.action = node.get("action")
+                            saveNode.status = node.get("status")
+                            saveNode.location = node.get("location")
+                            saveNode.task_x = node.get("task_x")
+                            saveNode.task_y = node.get("task_y")
+                            saveNode.task_z = node.get("task_z")
+                            saveNode.robot = node.get("robot")
+                            saveNode.type = node.get("type")
+                            saveNode.results = node.get("results")
+                            saveNode.photo_id = node.get("photo_id")
+                            saveNode.hot_id = node.get("hot_id")
+                            saveNode.voice_id = node.get("voice_id")
+                            saveNode.depends = node.get("depends")
+                            saveNode.save()
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node update successfully",
+                            "data": node_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        json_err = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node update no data",
+                            "data": []
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+                elif topic_name == "query":
+                    query_type = msg.get("_query_type", None)
+                    if query_type == "list":
+                        node_list = msg.get("_node_list", None)
+                        json_list = []
+                        if node_list is not None and len(node_list) > 0:
+                            print("squery_node: size: %s" % len(node_list))
+                            for task in node_list:
+                                queryTask = TaskNode.get_or_none(TaskNode.id == msg.get("id"))
+                                if queryTask is not None:
+                                    json_list.append(queryTask.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                            "code": 0,
+                            "_topic_type": topic_type,
+                            "_topic_name": topic_name,
+                            "message": "node query successfully",
+                            "data": json_list
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    elif topic_type == "page":
+                        page = msg.get("page", 1)
+                        size = msg.get("size", 20)
+                        node_list = TaskNode.select().paginate(page, size)
+                        json_list = []
+                        if node_list is not None and len(node_list) > 0:
+                            print("query_node: size: %s" % len(node_list))
+                            for task in node_list:
+                                json_list.append(task.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                                "code": 0,
+                                "_topic_name": topic_name,
+                                "_topic_type": topic_type,
+                                "data": json_list,
+                                "message": "node query successfully",
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                    else:
+                        node_list = TaskNode.select()
+                        json_list = []
+                        if node_list is not None and len(node_list) > 0:
+                            print("query_node: size: %s" % len(node_list))
+                            for task in node_list:
+                                json_list.append(task.model_to_dict())
+                        json_ok = [ROSBoardSocketHandler.MSG_TASK,
+                            {
+                                "code": 0,
+                                "_topic_name": topic_name,
+                                "_topic_type": topic_type,
+                                "data": json_list,
+                                "message": "node query successfully",
+                            }]
+                        self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
+                else:
+                    json_err = [ROSBoardSocketHandler.MSG_TASK,
+                        {
+                            "code": -1,
+                            "_topic_name": topic_name,
+                            "message": "topic_name not found.",
+                            "data": []
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             else:
                 json_err = [ROSBoardSocketHandler.MSG_TASK,
                     {
@@ -935,6 +1309,7 @@ class ROSBoardNode(object):
                 device_list = msg.get("_device_list", None)
                 if device_list is not None and len(device_list) > 0:
                     print("save_device: size: %s" % len(device_list))
+                    json_list = []
                     for device in device_list:
                         saveDevice = DeviceList.create()
                         saveDevice.device_name = device.get("device_name")
@@ -946,11 +1321,13 @@ class ROSBoardNode(object):
                         saveDevice.creator = "ros"
                         saveDevice.updater = "ros"
                         saveDevice.save()
+                        json_list.append({"id": saveDevice.id})
                     json_ok = [ROSBoardSocketHandler.MSG_DEVICE,
                         {
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device save successfully",
+                        "_device_list": json_list
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
                 else:
@@ -959,6 +1336,7 @@ class ROSBoardNode(object):
                         "code": 0,
                         "_topic_name": topic_name,
                         "message": "device save no data",
+                        "_device_list": []
                         }]
                     self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
             elif topic_name == "del":
