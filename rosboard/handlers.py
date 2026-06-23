@@ -236,7 +236,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             # send list of current tasks
             # print("message: task: %s" % message)
             task_data = argv[1]
-            if task_data is None:
+            if task_data is None or self.node.task_queue.full():
                 json_err = [ROSBoardSocketHandler.MSG_TASK,
                     {
                         "code": -100,
@@ -246,7 +246,9 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                 if self and self.ws_connection and not self.ws_connection.is_closing():
                     self.write_message(json.dumps(json_err))
             else:
-                self.node.sync_tasks(self, task_data)
+                task_data["_msg"] = ROSBoardSocketHandler.MSG_TASK
+                task_data["_sid"] = self.id
+                self.node.task_queue.put(task_data)
         elif argv[0] == ROSBoardSocketHandler.MSG_DEVICE:
             # send message of current device
             # print("message: device: %s" % message)

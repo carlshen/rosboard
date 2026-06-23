@@ -45,7 +45,7 @@ from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
 from rosboard.config import SAVE_DIR, FILE_TYPE, redis_ip, redis_port, redis_pass, secret, vhost, app, stream, schema
 from rosboard.config import pull_add, pull_del, push_add, push_del, pull_port, push_port, push_ip, pull_url, push_url, Cloud_Compress
-from rosboard.models import InfraFile, DeviceList, DeviceLog
+from rosboard.models import InfraFile, DeviceList, DeviceLog, TaskList, TaskNode
 from nav_msgs.msg import OccupancyGrid, MapMetaData
 from nav_msgs.msg import Path as PPath
 from sensor_msgs.msg import PointCloud2
@@ -132,6 +132,9 @@ class ROSBoardNode(object):
         self.ros_queue = queue.Queue(maxsize=10)
         # loop to keep track of message for ros log
         threading.Thread(target = self.saveros_loop, daemon = True).start()
+        self.task_queue = queue.Queue(maxsize=10)
+        # loop to keep track of message for task data
+        threading.Thread(target = self.task_loop, daemon = True).start()
 
         self.lock = threading.Lock()
 
@@ -384,11 +387,45 @@ class ROSBoardNode(object):
             rospy.logwarn(str(e))
             traceback.print_exc()
 
-    def sync_tasks(self, sock: socket, msg: json):
+    def task_loop(self):
+        """
+        loop to keep track of message for task data. Intended to be run in a thread.
+        """
+        while True:
+            try:
+                # 从队列获取消息（阻塞等待，直到有消息或超时）
+                message = self.task_queue.get()
+
+                # 处理消息
+                if message is None:
+                    continue
+                msg = message.pop("_msg", None)
+                if msg == ROSBoardSocketHandler.MSG_TASK:
+                    self.sync_tasks(message)
+                else:
+                    print("task_loop topic is not processed: %s" % message.get("_topic_name", ""))
+                    sid = message.pop("_sid", None)
+                    json_err = [msg,
+                        {
+                        "code": -1,
+                        "_topic_name": message.get("_topic_name", ""),
+                        "message": "topic_name not found.",
+                        }]
+                    self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
+
+                # 标记任务完成
+                self.task_queue.task_done()
+
+            except Exception as e:
+                print(f"[task_loop] exception: {e}")
+                traceback.print_exc()
+
+    def sync_tasks(self, msg: json):
         # send task data to ros
         if msg is None:
             print("sync_tasks msg is None.")
             return
+        sid = msg.pop("_sid", None)
         try:
             topic_name = msg.pop("_topic_name", None)
             topic_type = msg.pop("_topic_type", None)
@@ -420,8 +457,7 @@ class ROSBoardNode(object):
                         "message": "task data send successfully",
                    }]
                 # print("sync_tasks task_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             elif topic_type == "geometry_msgs/PoseStamped" and not rospy.is_shutdown():
                 stime = rospy.Time.now()
                 stime.secs = msg['header']['stamp']['secs']
@@ -442,8 +478,7 @@ class ROSBoardNode(object):
                         "message": "task data send successfully",
                    }]
                 # print("sync_tasks task_data ok: %s" % json_ok)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_ok))
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_ok, sid)
             elif topic_type == "task_info" and not rospy.is_shutdown():
                 if topic_name == "add":
                     task_list = msg.get("_task_list", None)
@@ -472,6 +507,13 @@ class ROSBoardNode(object):
                             saveTask.updater = "ros"
                             saveTask.save()
                             json_list.append({"id": saveTask.id})
+                            # add id to device list
+                            robots = task.get("task_rob", "").split(",")
+                            for rob in robots:
+                                saveDevice = DeviceList.get_or_none(DeviceList.device_name == rob)
+                                if saveDevice is not None:
+                                    saveDevice.task_id = saveTask.id
+                                    saveDevice.save()
                         json_ok = [ROSBoardSocketHandler.MSG_TASK,
                             {
                             "code": 0,
@@ -568,15 +610,11 @@ class ROSBoardNode(object):
                         self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
                 elif topic_name == "query":
                     query_type = msg.get("_query_type", None)
-                    if query_type == "list":
-                        task_list = msg.get("_task_list", None)
+                    if query_type == "one":
                         json_list = []
-                        if task_list is not None and len(task_list) > 0:
-                            print("squery_task: size: %s" % len(task_list))
-                            for task in task_list:
-                                queryTask = TaskList.get_or_none(TaskList.id == msg.get("id"))
-                                if queryTask is not None:
-                                    json_list.append(queryTask.model_to_dict())
+                        queryTask = TaskList.get_or_none(TaskList.id == msg.get("id"))
+                        if queryTask is not None:
+                            json_list.append(queryTask.model_to_dict())
                         json_ok = [ROSBoardSocketHandler.MSG_TASK,
                             {
                             "code": 0,
@@ -659,6 +697,11 @@ class ROSBoardNode(object):
                             saveNode.updater = "ros"
                             saveNode.save()
                             json_list.append({"id": saveNode.id})
+                            # add id to device list
+                            saveDevice = DeviceList.get_or_none(DeviceList.device_name == node.get("robot"))
+                            if saveDevice is not None:
+                                saveDevice.node_id = saveNode.id
+                                saveDevice.save()
                         json_ok = [ROSBoardSocketHandler.MSG_TASK,
                             {
                             "code": 0,
@@ -757,15 +800,11 @@ class ROSBoardNode(object):
                         self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
                 elif topic_name == "query":
                     query_type = msg.get("_query_type", None)
-                    if query_type == "list":
-                        node_list = msg.get("_node_list", None)
+                    if query_type == "one":
                         json_list = []
-                        if node_list is not None and len(node_list) > 0:
-                            print("squery_node: size: %s" % len(node_list))
-                            for task in node_list:
-                                queryTask = TaskNode.get_or_none(TaskNode.id == msg.get("id"))
-                                if queryTask is not None:
-                                    json_list.append(queryTask.model_to_dict())
+                        queryNode = TaskNode.get_or_none(TaskNode.id == msg.get("id"))
+                        if queryNode is not None:
+                            json_list.append(queryNode.model_to_dict())
                         json_ok = [ROSBoardSocketHandler.MSG_TASK,
                             {
                             "code": 0,
@@ -827,8 +866,7 @@ class ROSBoardNode(object):
                         "message": "task data send error for topic type not support.",
                    }]
                 print("sync_tasks task_data err: %s" % json_err)
-                if sock and sock.ws_connection and not sock.ws_connection.is_closing():
-                    sock.write_message(json.dumps(json_err))
+                self.event_loop.add_callback(ROSBoardSocketHandler.callback, json_err, sid)
 
         except Exception as e:
             rospy.logwarn(str(e))
