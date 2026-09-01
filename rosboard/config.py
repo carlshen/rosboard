@@ -1,9 +1,10 @@
 # mysql数据库配置
 mysql_db = "fy_project"
 mysql_user = "root"
-# mysql_user = "user"
-mysql_password = "12345678"
-mysql_host = "localhost"
+mysql_user = "xiang"
+mysql_password = "Baize_12"
+mysql_host = "172.22.16.1"
+# mysql_host = "localhost"
 mysql_port = 3306
 
 # redis数据库配置
